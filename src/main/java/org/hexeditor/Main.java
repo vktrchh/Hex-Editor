@@ -1,6 +1,6 @@
 package org.hexeditor;
 
-import org.hexeditor.io.MainFrame;
+import org.hexeditor.ui.MainFrame;
 
 import javax.swing.*;
 
