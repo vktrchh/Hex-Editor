@@ -1,5 +1,6 @@
 package org.hexeditor.ui;
 
+import org.hexeditor.io.ByteSource;
 import org.hexeditor.io.FileByteSource;
 import org.hexeditor.model.HexViewport;
 
@@ -10,6 +11,13 @@ import java.io.IOException;
 
 public class MainFrame extends JFrame {
     private final JButton openButton = new JButton("Открыть");
+    private final JButton startButton = new JButton("|<");
+    private final JButton lineUpButton = new JButton("<");
+    private final JButton pageUpButton = new JButton("<<");
+    private final JButton pageDownButton = new JButton(">>");
+    private final JButton lineDownButton = new JButton(">");
+    private final JButton endButton = new JButton(">|");
+    private final JLabel offsetInfoLabel = new JLabel("Offset: 00000000");
     private final JToolBar toolBar = new JToolBar();
 
     private final JTable table = new JTable();
@@ -21,7 +29,7 @@ public class MainFrame extends JFrame {
 
     private final HexViewport hexViewport = new HexViewport();
 
-    private FileByteSource currentByteSource;
+    private ByteSource currentByteSource;
     private HexTableModel currentHexModel;
     private OffsetTableModel currentOffsetModel;
 
@@ -32,11 +40,12 @@ public class MainFrame extends JFrame {
         initLayout();
         initAction();
         syncTableAppearance();
+        updateOffsetLabel();
     }
 
     private void initFrame(){
         setTitle("Hex Editor");
-        setDefaultCloseOperation(EXIT_ON_CLOSE); //?
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setSize(1000, 600);
         setLayout(new BorderLayout());
         setLocationRelativeTo(null);
@@ -45,12 +54,22 @@ public class MainFrame extends JFrame {
     private void initLayout(){
         add(scrollPane, BorderLayout.CENTER);
         add(toolBar, BorderLayout.NORTH);
+        add(offsetInfoLabel, BorderLayout.SOUTH);
     }
 
     private void initAction(){
         openButton.addActionListener(e -> openFile());
+
+        startButton.addActionListener(e -> moveToStart());
+        lineUpButton.addActionListener(e -> moveLineUp());
+        pageUpButton.addActionListener(e -> movePageUp());
+        pageDownButton.addActionListener(e -> movePageDown());
+        lineDownButton.addActionListener(e -> moveLineDown());
+        endButton.addActionListener(e -> moveToEnd());
+
         bytesPerRowField.addActionListener(e -> applyViewportSettings());
         visibleRowsField.addActionListener(e -> applyViewportSettings());
+
     }
 
     private void initToolBar(){
@@ -59,7 +78,16 @@ public class MainFrame extends JFrame {
         toolBar.add(openButton);
         toolBar.addSeparator();
 
-        toolBar.add(new JLabel("Байт/строка:"));
+        toolBar.add(startButton);
+        toolBar.add(lineDownButton);
+        toolBar.add(lineUpButton);
+        toolBar.add(pageDownButton);
+        toolBar.add(pageUpButton);
+        toolBar.add(endButton);
+
+        toolBar.addSeparator();
+
+        toolBar.add(new JLabel("Байт в строке:"));
         toolBar.add(bytesPerRowField);
 
         toolBar.addSeparator();
@@ -93,12 +121,7 @@ public class MainFrame extends JFrame {
         try {
             currentByteSource.close();
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Ошибка при закрытии файла: " + e.getMessage(),
-                    "Ошибка",
-                    JOptionPane.ERROR_MESSAGE
-            );
+            showErrorMessage("Ошибка при закрытии файла: " + e.getMessage());
         } finally {
             currentByteSource = null;
         }
@@ -125,13 +148,10 @@ public class MainFrame extends JFrame {
             scrollPane.getViewport().setViewPosition(new Point(0, 0));
             scrollPane.getRowHeader().setViewPosition(new Point(0, 0));
 
+            updateOffsetLabel();
+
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Ошибка при открытии файла: " + e.getMessage(),
-                    "Ошибка",
-                    JOptionPane.ERROR_MESSAGE
-            );
+            showErrorMessage("Ошибка при открытии файла: " + e.getMessage());
         }
     }
 
@@ -151,36 +171,29 @@ public class MainFrame extends JFrame {
             int bytesPerRow = Integer.parseInt(bytesPerRowField.getText().trim());
             int visibleRows = Integer.parseInt(visibleRowsField.getText().trim());
 
+
             hexViewport.setBytesPerRow(bytesPerRow);
             hexViewport.setVisibleRows(visibleRows);
 
             if (currentHexModel != null) {
                 currentHexModel.fireTableStructureChanged();
+
             }
 
             if (currentOffsetModel != null) {
                 currentOffsetModel.fireTableStructureChanged();
             }
 
+            setViewportOffsetClamped(hexViewport.getTableOffset());
             syncTableAppearance();
 
             scrollPane.getViewport().setViewPosition(new Point(0, 0));
             scrollPane.getRowHeader().setViewPosition(new Point(0, 0));
 
         } catch (NumberFormatException e) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Введите целые числа для количества байтов в строке и количества строк.",
-                    "Ошибка ввода",
-                    JOptionPane.WARNING_MESSAGE
-            );
+            showWarningMessage("Введите целые числа для количества байтов в строке и количества строк.");
         } catch (IllegalArgumentException e) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    e.getMessage(),
-                    "Некорректные параметры",
-                    JOptionPane.WARNING_MESSAGE
-            );
+            showWarningMessage(e.getMessage());
         }
     }
 
@@ -209,5 +222,112 @@ public class MainFrame extends JFrame {
         offsetTable.revalidate();
         scrollPane.revalidate();
         scrollPane.repaint();
+    }
+
+    private void updateOffsetLabel() {
+        offsetInfoLabel.setText(String.format("Offset: %08X", hexViewport.getTableOffset()));
+    }
+
+    private void refreshDataView() {
+        if (currentHexModel != null) {
+            currentHexModel.fireTableDataChanged();
+        }
+
+        if (currentOffsetModel != null) {
+            currentOffsetModel.fireTableDataChanged();
+        }
+
+        updateOffsetLabel();
+    }
+
+    private long getMaxViewportOffset() {
+        if (currentByteSource == null) {
+            return 0;
+        }
+
+        try {
+            long fileLength = currentByteSource.length();
+            long pageSize = hexViewport.getPageBytesSize();
+
+            if (fileLength <= pageSize) {
+                return 0;
+            }
+
+            long maxOffset = fileLength - pageSize;
+            return hexViewport.alignOffsetToRowStart(maxOffset);
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при получении размера файла: " + e.getMessage());
+            return 0;
+        }
+    }
+
+    private void setViewportOffsetClamped(long requestedOffset) {
+        long maxOffset = getMaxViewportOffset();
+
+        long clampedOffset = requestedOffset;
+
+        if (clampedOffset < 0) {
+            clampedOffset = 0;
+        }
+
+        if (clampedOffset > maxOffset) {
+            clampedOffset = maxOffset;
+        }
+
+        clampedOffset = hexViewport.alignOffsetToRowStart(clampedOffset);
+        hexViewport.setTableOffset(clampedOffset);
+
+        refreshDataView();
+    }
+    private void moveToStart() {
+        setViewportOffsetClamped(0);
+    }
+
+    private void moveLineUp() {
+        long newOffset = hexViewport.getTableOffset() - hexViewport.getBytesPerRow();
+        setViewportOffsetClamped(newOffset);
+    }
+
+    private void moveLineDown() {
+        long newOffset = hexViewport.getTableOffset() + hexViewport.getBytesPerRow();
+        setViewportOffsetClamped(newOffset);
+    }
+
+    private void movePageUp() {
+        long newOffset = hexViewport.getTableOffset() - hexViewport.getPageBytesSize();
+        setViewportOffsetClamped(newOffset);
+    }
+
+    private void movePageDown() {
+        long newOffset = hexViewport.getTableOffset() + hexViewport.getPageBytesSize();
+        setViewportOffsetClamped(newOffset);
+    }
+
+    private void moveToEnd() {
+        setViewportOffsetClamped(getMaxViewportOffset());
+    }
+
+    @Override
+    public void dispose() {
+        closeCurrentSource();
+        super.dispose();
+    }
+
+    private void showErrorMessage(String message){
+        JOptionPane.showMessageDialog(
+                this,
+                message,
+                "Ошибка",
+                JOptionPane.ERROR_MESSAGE
+        );
+    }
+
+    private void showWarningMessage(String  message){
+        JOptionPane.showMessageDialog(
+                this,
+                message,
+                "Предупреждение",
+                JOptionPane.WARNING_MESSAGE
+        );
     }
 }
