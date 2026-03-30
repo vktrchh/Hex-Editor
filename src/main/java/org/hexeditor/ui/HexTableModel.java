@@ -1,17 +1,18 @@
 package org.hexeditor.ui;
 
 import org.hexeditor.io.ByteSource;
+import org.hexeditor.model.HexViewport;
 
 import javax.swing.table.AbstractTableModel;
 import java.io.IOException;
 
 public class HexTableModel extends AbstractTableModel {
     private final ByteSource byteSource;
-    private final int rows = 16;
-    private final int cols = 16;
+    HexViewport viewport;
 
-    public HexTableModel(ByteSource byteSource){
+    public HexTableModel(ByteSource byteSource, HexViewport viewport){
         this.byteSource = byteSource;
+        this.viewport = viewport;
     }
 
 
@@ -22,17 +23,17 @@ public class HexTableModel extends AbstractTableModel {
 
     @Override
     public int getRowCount() {
-        return rows;
+        return viewport.getVisibleRows();
     }
 
     @Override
     public int getColumnCount(){
-        return cols;
+        return viewport.getBytesPerRow();
     }
 
     @Override
-    public Object getValueAt(int  rowIndex, int columIndex){
-        long offset = rowIndex * cols + columIndex;
+    public Object getValueAt(int  rowIndex, int columnIndex){
+        long offset = viewport.getByteOffset(rowIndex, columnIndex);
 
         try{
             if(offset >= byteSource.length()){

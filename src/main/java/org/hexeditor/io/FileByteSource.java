@@ -8,7 +8,7 @@ public class FileByteSource implements ByteSource{
     private final RandomAccessFile raf;
 
     public FileByteSource(File file) throws IOException{
-        this.raf = new RandomAccessFile(file, "rw");
+        this.raf = new RandomAccessFile(file, "r");
     }
 
     @Override
@@ -20,5 +20,9 @@ public class FileByteSource implements ByteSource{
     public byte readByte(long offset) throws IOException {
         raf.seek(offset);
         return raf.readByte();
+    }
+
+    public void close() throws IOException{
+        raf.close();
     }
 }
