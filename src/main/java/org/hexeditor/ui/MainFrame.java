@@ -17,7 +17,15 @@ public class MainFrame extends JFrame {
     private final JButton pageDownButton = new JButton(">>");
     private final JButton lineDownButton = new JButton(">");
     private final JButton endButton = new JButton(">|");
+
+    private final JPanel infoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
     private final JLabel offsetInfoLabel = new JLabel("Offset: 00000000");
+    private final JLabel selectedOffsetLabel = new JLabel("Selected: --");
+    private final JLabel selectedHexLabel = new JLabel("Hex: --");
+    private final JLabel selectedUnsignedLabel = new JLabel("Unsigned: --");
+    private final JLabel selectedSignedLabel = new JLabel("Signed: --");
+
+
     private final JToolBar toolBar = new JToolBar();
 
     private final JTable table = new JTable();
@@ -33,12 +41,16 @@ public class MainFrame extends JFrame {
     private HexTableModel currentHexModel;
     private OffsetTableModel currentOffsetModel;
 
+    private long selectedByteOffset = -1;
+    private boolean selectionUpdating = false;
+
     public MainFrame() {
         initFrame();
         initToolBar();
         initTables();
         initLayout();
         initAction();
+        initInfoPanel();
         syncTableAppearance();
         updateOffsetLabel();
     }
@@ -54,7 +66,7 @@ public class MainFrame extends JFrame {
     private void initLayout(){
         add(scrollPane, BorderLayout.CENTER);
         add(toolBar, BorderLayout.NORTH);
-        add(offsetInfoLabel, BorderLayout.SOUTH);
+        add(infoPanel, BorderLayout.SOUTH);
     }
 
     private void initAction(){
@@ -70,6 +82,17 @@ public class MainFrame extends JFrame {
         bytesPerRowField.addActionListener(e -> applyViewportSettings());
         visibleRowsField.addActionListener(e -> applyViewportSettings());
 
+        table.getSelectionModel().addListSelectionListener(e ->{
+            if(!e.getValueIsAdjusting()) {
+                updateSelectedByteFromTable();
+            }
+        });
+
+        table.getColumnModel().getSelectionModel().addListSelectionListener(e -> {
+            if(!e.getValueIsAdjusting()) {
+                updateSelectedByteFromTable();
+            }
+        });
     }
 
     private void initToolBar(){
@@ -113,6 +136,18 @@ public class MainFrame extends JFrame {
         scrollPane.setRowHeaderView(offsetTable);
     }
 
+    private void initInfoPanel() {
+        infoPanel.add(offsetInfoLabel);
+        infoPanel.add(Box.createHorizontalStrut(20));
+        infoPanel.add(selectedOffsetLabel);
+        infoPanel.add(Box.createHorizontalStrut(20));
+        infoPanel.add(selectedHexLabel);
+        infoPanel.add(Box.createHorizontalStrut(20));
+        infoPanel.add(selectedUnsignedLabel);
+        infoPanel.add(Box.createHorizontalStrut(20));
+        infoPanel.add(selectedSignedLabel);
+    }
+
     private void closeCurrentSource() {
         if (currentByteSource == null) {
             return;
@@ -149,6 +184,13 @@ public class MainFrame extends JFrame {
             scrollPane.getRowHeader().setViewPosition(new Point(0, 0));
 
             updateOffsetLabel();
+
+            if(isOffsetInsideFile(0)) {
+                selectedByteOffset = 0;
+                restoreSelectionIfVisible();
+            } else {
+                clearSelectedByteInfo();
+            }
 
         } catch (IOException e) {
             showErrorMessage("Ошибка при открытии файла: " + e.getMessage());
@@ -238,6 +280,7 @@ public class MainFrame extends JFrame {
         }
 
         updateOffsetLabel();
+        restoreSelectionIfVisible();
     }
 
     private long getMaxViewportOffset() {
@@ -329,5 +372,117 @@ public class MainFrame extends JFrame {
                 "Предупреждение",
                 JOptionPane.WARNING_MESSAGE
         );
+    }
+
+    private void clearSelectedByteInfo() {
+        selectedByteOffset = -1;
+        selectedOffsetLabel.setText("Selected: --");
+        selectedHexLabel.setText("Hex: --");
+        selectedUnsignedLabel.setText("Unsigned: --");
+        selectedSignedLabel.setText("Signed: --");
+    }
+
+    private boolean isOffsetInsideFile(long offset) {
+        if (currentByteSource == null || offset < 0) {
+            return false;
+        }
+
+        try {
+            return offset < currentByteSource.length();
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при получении размера файла: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private void updateSelectedByteInfo() {
+        if (currentByteSource == null || selectedByteOffset < 0) {
+            clearSelectedByteInfo();
+            return;
+        }
+
+        try {
+            if (selectedByteOffset >= currentByteSource.length()) {
+                clearSelectedByteInfo();
+                return;
+            }
+
+            byte value = currentByteSource.readByte(selectedByteOffset);
+            int unsignedValue = value & 0xFF;
+
+            selectedOffsetLabel.setText(String.format("Selected: %08X", selectedByteOffset));
+            selectedHexLabel.setText(String.format("Hex: %02X", unsignedValue));
+            selectedUnsignedLabel.setText("Unsigned: " + unsignedValue);
+            selectedSignedLabel.setText("Signed: " + (int) value);
+
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при чтении выбранного байта: " + e.getMessage());
+            clearSelectedByteInfo();
+        }
+    }
+
+    private void updateSelectedByteFromTable() {
+        if (selectionUpdating || currentByteSource == null) {
+            return;
+        }
+
+        int selectedRow = table.getSelectedRow();
+        int selectedColumn = table.getSelectedColumn();
+
+        if (selectedRow < 0 || selectedColumn < 0) {
+            clearSelectedByteInfo();
+            return;
+        }
+
+        long offset = hexViewport.getByteOffset(selectedRow, selectedColumn);
+
+        if (!isOffsetInsideFile(offset)) {
+            clearSelectedByteInfo();
+            return;
+        }
+
+        selectedByteOffset = offset;
+        updateSelectedByteInfo();
+    }
+
+    private boolean isSelectedByteVisibleInViewport() {
+        if (selectedByteOffset < 0) {
+            return false;
+        }
+
+        long pageStart = hexViewport.getTableOffset();
+        long pageEnd = pageStart + hexViewport.getPageBytesSize();
+
+        return selectedByteOffset >= pageStart && selectedByteOffset < pageEnd;
+    }
+
+    private void restoreSelectionIfVisible() {
+        if (selectedByteOffset < 0) {
+            return;
+        }
+
+        if (!isSelectedByteVisibleInViewport()) {
+            selectionUpdating = true;
+            try {
+                table.clearSelection();
+            } finally {
+                selectionUpdating = false;
+            }
+            clearSelectedByteInfo();
+            return;
+        }
+
+        long relativeOffset = selectedByteOffset - hexViewport.getTableOffset();
+        int row = (int) (relativeOffset / hexViewport.getBytesPerRow());
+        int column = (int) (relativeOffset % hexViewport.getBytesPerRow());
+
+        selectionUpdating = true;
+        try {
+            table.changeSelection(row, column, false, false);
+        } finally {
+            selectionUpdating = false;
+        }
+
+        updateSelectedByteInfo();
     }
 }
