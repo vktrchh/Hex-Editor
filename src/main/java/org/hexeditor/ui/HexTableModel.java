@@ -8,7 +8,7 @@ import java.io.IOException;
 
 public class HexTableModel extends AbstractTableModel {
     private final ByteSource byteSource;
-    HexViewport viewport;
+    private final HexViewport viewport;
 
     public HexTableModel(ByteSource byteSource, HexViewport viewport){
         this.byteSource = byteSource;

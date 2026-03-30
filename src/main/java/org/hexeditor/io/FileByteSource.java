@@ -22,6 +22,7 @@ public class FileByteSource implements ByteSource{
         return raf.readByte();
     }
 
+    @Override
     public void close() throws IOException{
         raf.close();
     }
