@@ -160,6 +160,11 @@ public class MainFrame extends JFrame {
 
             table.setModel(currentHexModel);
             offsetTable.setModel(currentOffsetModel);
+            currentHexModel.addTableModelListener(e -> {
+                if (selectedByteOffset >= 0) {
+                    updateSelectedByteInfo();
+                }
+            });
 
             syncTableAppearance();
 
