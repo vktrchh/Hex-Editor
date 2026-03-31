@@ -6,12 +6,20 @@ import org.hexeditor.model.HexViewport;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 public class MainFrame extends JFrame {
     private final JButton openButton = new JButton("Открыть");
     private final JButton findButton = new JButton("Найти");
+    private final JButton saveAsButton = new JButton("Сохранить как");
+    private final JButton saveButton = new JButton("Сохранить");
     //private final JButton findByMask = new JButton("Поиск по маске");
     private final JButton startButton = new JButton("|<");
     private final JButton lineUpButton = new JButton("<");
@@ -19,6 +27,9 @@ public class MainFrame extends JFrame {
     private final JButton pageDownButton = new JButton(">>");
     private final JButton lineDownButton = new JButton(">");
     private final JButton endButton = new JButton(">|");
+
+    private final JLabel saveStatus = new JLabel("Сохранено");
+
 
     private final ByteInfoPanel byteInfoPanel = new ByteInfoPanel();
 
@@ -33,6 +44,7 @@ public class MainFrame extends JFrame {
 
     private final HexViewport hexViewport = new HexViewport();
 
+    private File currentFile;
     private HexDocument currentDocument;
     private HexTableModel currentHexModel;
     private OffsetTableModel currentOffsetModel;
@@ -52,7 +64,7 @@ public class MainFrame extends JFrame {
 
     private void initFrame(){
         setTitle("Hex Editor");
-        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         setSize(1000, 600);
         setLayout(new BorderLayout());
         setLocationRelativeTo(null);
@@ -67,6 +79,8 @@ public class MainFrame extends JFrame {
     private void initAction(){
         openButton.addActionListener(e -> openFile());
         findButton.addActionListener(e-> showFindDialog());
+        saveAsButton.addActionListener(e-> saveFileAs());
+        saveButton.addActionListener(e -> saveCurrentFile());
 
         startButton.addActionListener(e -> moveToStart());
         lineUpButton.addActionListener(e -> moveLineUp());
@@ -89,6 +103,13 @@ public class MainFrame extends JFrame {
                 updateSelectedByteFromTable();
             }
         });
+
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                attemptClose();
+            }
+        });
     }
 
     private void initToolBar(){
@@ -96,6 +117,8 @@ public class MainFrame extends JFrame {
 
         toolBar.add(openButton);
         toolBar.add(findButton);
+        toolBar.add(saveButton);
+        toolBar.add(saveAsButton);
         toolBar.addSeparator();
 
         toolBar.add(startButton);
@@ -114,6 +137,9 @@ public class MainFrame extends JFrame {
 
         toolBar.add(new JLabel("Строк:"));
         toolBar.add(visibleRowsField);
+        toolBar.addSeparator();
+        toolBar.add(Box.createHorizontalGlue());
+        toolBar.add(saveStatus);
     }
 
     private void initTables() {
@@ -145,6 +171,7 @@ public class MainFrame extends JFrame {
             showErrorMessage("Ошибка при закрытии файла: " + e.getMessage());
         } finally {
             currentDocument = null;
+            currentFile = null;
         }
     }
 
@@ -153,6 +180,7 @@ public class MainFrame extends JFrame {
             closeCurrentDocument();
 
             currentDocument = new FileHexDocument(file);
+            currentFile = file;
 
             hexViewport.setTableOffset(0);
             currentHexModel = new HexTableModel(currentDocument, hexViewport);
@@ -164,6 +192,7 @@ public class MainFrame extends JFrame {
                 if (selectedByteOffset >= 0) {
                     updateSelectedByteInfo();
                 }
+                updateModifiedStatus();
             });
 
             syncTableAppearance();
@@ -182,6 +211,7 @@ public class MainFrame extends JFrame {
             } else {
                 clearSelectedByteInfo();
             }
+            updateModifiedStatus();
 
         } catch (IOException e) {
             showErrorMessage("Ошибка при открытии файла: " + e.getMessage());
@@ -189,6 +219,9 @@ public class MainFrame extends JFrame {
     }
 
     private void openFile(){
+        if(confirmSaveIfNeeded()){
+            return;
+        }
         JFileChooser chooser = new JFileChooser();
         int result = chooser.showOpenDialog(this);
 
@@ -661,4 +694,185 @@ public class MainFrame extends JFrame {
         }
     }
 
+    private void updateModifiedStatus() {
+        if (currentDocument != null && currentDocument.isModified()) {
+            saveStatus.setText("Есть несохраненные изменения");
+        } else {
+            saveStatus.setText("Сохранено");
+        }
+    }
+
+
+    private void saveFileAs() {
+        if (currentDocument == null) {
+            showWarningMessage("Сначала откройте файл.");
+            return;
+        }
+
+        JFileChooser chooser = new JFileChooser();
+        int result = chooser.showSaveDialog(this);
+
+        if (result != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        File file = chooser.getSelectedFile();
+
+        try {
+            saveDocumentToTarget(file);
+
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Файл успешно сохранен.",
+                    "Сохранение",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при сохранении файла: " + e.getMessage());
+        }
+    }
+
+    private void saveCurrentFile() {
+        if (currentDocument == null) {
+            showWarningMessage("Сначала откройте файл.");
+            return;
+        }
+
+        if (currentFile == null) {
+            saveFileAs();
+            return;
+        }
+
+        try {
+            saveDocumentToTarget(currentFile);
+
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Файл успешно сохранен.",
+                    "Сохранение",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при сохранении файла: " + e.getMessage());
+        }
+    }
+
+
+
+    private boolean confirmSaveIfNeeded() {
+        if (currentDocument == null || !currentDocument.isModified()) {
+            return false;
+        }
+
+        int choice = JOptionPane.showConfirmDialog(
+                this,
+                "Есть несохраненные изменения. Сохранить?",
+                "Несохраненные изменения",
+                JOptionPane.YES_NO_CANCEL_OPTION,
+                JOptionPane.WARNING_MESSAGE
+        );
+
+        if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) {
+            return true;
+        }
+
+        if (choice == JOptionPane.YES_OPTION) {
+            if (currentFile == null) {
+                JFileChooser chooser = new JFileChooser();
+                int result = chooser.showSaveDialog(this);
+
+                if (result != JFileChooser.APPROVE_OPTION) {
+                    return true;
+                }
+
+                File file = chooser.getSelectedFile();
+
+                try {
+                    saveDocumentToTarget(file);
+                    return false;
+                } catch (IOException e) {
+                    showErrorMessage("Ошибка при сохранении файла: " + e.getMessage());
+                    return true;
+                }
+            } else {
+                try {
+                    saveDocumentToTarget(currentFile);
+                    return false;
+                } catch (IOException e) {
+                    showErrorMessage("Ошибка при сохранении файла: " + e.getMessage());
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private void attemptClose() {
+        if (confirmSaveIfNeeded()) {
+            return;
+        }
+
+        closeCurrentDocument();
+        super.dispose();
+    }
+
+    private boolean isSameFile(File a, File b) {
+        try {
+            return a.getCanonicalFile().equals(b.getCanonicalFile());
+        } catch (IOException e) {
+            return a.getAbsoluteFile().equals(b.getAbsoluteFile());
+        }
+    }
+
+    private void saveDocumentToTarget(File targetFile) throws IOException {
+        if (currentDocument == null) {
+            throw new IOException("Документ не открыт.");
+        }
+
+        boolean overwriteCurrent =
+                currentFile != null && isSameFile(currentFile, targetFile);
+
+        if (!overwriteCurrent) {
+            currentDocument.saveTo(targetFile);
+            loadFile(targetFile);
+            return;
+        }
+
+        File parentDir = targetFile.getAbsoluteFile().getParentFile();
+        if (parentDir == null) {
+            parentDir = new File(".");
+        }
+
+        File tempFile = File.createTempFile("hexedit_", ".tmp", parentDir);
+
+        try {
+            currentDocument.saveTo(tempFile);
+
+            closeCurrentDocument();
+
+            Path tempPath = tempFile.toPath();
+            Path targetPath = targetFile.toPath();
+
+            try {
+                Files.move(
+                        tempPath,
+                        targetPath,
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE
+                );
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(
+                        tempPath,
+                        targetPath,
+                        StandardCopyOption.REPLACE_EXISTING
+                );
+            }
+
+            loadFile(targetFile);
+
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
 }

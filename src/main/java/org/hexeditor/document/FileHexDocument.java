@@ -4,6 +4,7 @@ import org.hexeditor.io.ByteSource;
 import org.hexeditor.io.FileByteSource;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
@@ -35,6 +36,13 @@ public class FileHexDocument implements HexDocument {
         if(offset< 0 || offset >= length()){
             throw new IllegalArgumentException();
         }
+
+        byte beforeModifyValue = byteSource.readByte(offset);
+
+        if(beforeModifyValue == value){
+            modifiedBytes.remove(offset);
+            return;
+        }
         modifiedBytes.put(offset, value);
 
     }
@@ -47,5 +55,16 @@ public class FileHexDocument implements HexDocument {
     @Override
     public void close() throws IOException {
         byteSource.close();
+    }
+
+    @Override
+    public void saveTo(File file) throws IOException {
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            long fileLength = length();
+
+            for (long i = 0; i < fileLength; i++) {
+                out.write(readByte(i) & 0xFF);
+            }
+        }
     }
 }

@@ -1,6 +1,7 @@
 package org.hexeditor.document;
 
 import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
 
 public interface HexDocument extends Closeable {
@@ -13,4 +14,6 @@ public interface HexDocument extends Closeable {
     @Override
     default void close() throws IOException {
     }
+
+    void saveTo(File file) throws IOException;
 }
