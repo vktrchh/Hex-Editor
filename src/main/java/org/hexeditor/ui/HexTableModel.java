@@ -1,17 +1,17 @@
 package org.hexeditor.ui;
 
-import org.hexeditor.io.ByteSource;
+import org.hexeditor.document.HexDocument;
 import org.hexeditor.model.HexViewport;
 
 import javax.swing.table.AbstractTableModel;
 import java.io.IOException;
 
 public class HexTableModel extends AbstractTableModel {
-    private final ByteSource byteSource;
+    private final HexDocument document;
     private final HexViewport viewport;
 
-    public HexTableModel(ByteSource byteSource, HexViewport viewport){
-        this.byteSource = byteSource;
+    public HexTableModel(HexDocument document, HexViewport viewport){
+        this.document = document;
         this.viewport = viewport;
     }
 
@@ -36,11 +36,11 @@ public class HexTableModel extends AbstractTableModel {
         long offset = viewport.getByteOffset(rowIndex, columnIndex);
 
         try{
-            if(offset >= byteSource.length()){
+            if(offset >= document.length()){
                 return "";
             }
 
-            int value = byteSource.readByte(offset) & 0xFF;
+            int value = document.readByte(offset) & 0xFF;
             return String.format("%02X", value);
         } catch (IOException e){
             return "??"; //заглушка
