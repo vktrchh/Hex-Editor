@@ -21,6 +21,8 @@ public class ByteInfoPanel extends JPanel {
     private final JLabel uint64Label = new JLabel("UInt64: --");
     private final JLabel doubleLabel = new JLabel("Double: --");
 
+    private final JLabel blockLengthLabel = new JLabel("Block: 1 byte");
+
     public ByteInfoPanel() {
         setLayout(new GridLayout(2, 1));
 
@@ -34,6 +36,8 @@ public class ByteInfoPanel extends JPanel {
         firstRow.add(selectedUnsignedLabel);
         firstRow.add(Box.createHorizontalStrut(20));
         firstRow.add(selectedSignedLabel);
+        firstRow.add(Box.createHorizontalStrut(20));
+        firstRow.add(blockLengthLabel);
 
         JPanel secondRow = new JPanel(new FlowLayout(FlowLayout.LEFT));
         secondRow.add(int16Label);
@@ -71,6 +75,7 @@ public class ByteInfoPanel extends JPanel {
         clearInt16Info();
         clearInt32Info();
         clearInt64Info();
+        clearBlockLength();
     }
 
     public void showSingleByte(long offset, int unsignedValue, int signedValue) {
@@ -112,5 +117,17 @@ public class ByteInfoPanel extends JPanel {
         int64Label.setText("Int64: --");
         uint64Label.setText("UInt64: --");
         doubleLabel.setText("Double: --");
+    }
+
+    public void showBlockLength(long length) {
+        if (length <= 1) {
+            blockLengthLabel.setText("Block: 1 byte");
+        } else {
+            blockLengthLabel.setText("Block: " + length + " bytes");
+        }
+    }
+
+    public void clearBlockLength() {
+        blockLengthLabel.setText("Block: --");
     }
 }

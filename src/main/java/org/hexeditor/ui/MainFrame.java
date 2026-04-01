@@ -3,6 +3,8 @@ package org.hexeditor.ui;
 import org.hexeditor.document.FileHexDocument;
 import org.hexeditor.document.HexDocument;
 import org.hexeditor.model.HexViewport;
+import org.hexeditor.search.HexSearchService;
+import org.hexeditor.search.MaskPattern;
 
 import javax.swing.*;
 import java.awt.*;
@@ -20,7 +22,7 @@ public class MainFrame extends JFrame {
     private final JButton findButton = new JButton("Найти");
     private final JButton saveAsButton = new JButton("Сохранить как");
     private final JButton saveButton = new JButton("Сохранить");
-    //private final JButton findByMask = new JButton("Поиск по маске");
+    private final JButton findByMask = new JButton("Поиск по маске");
     private final JButton startButton = new JButton("|<");
     private final JButton lineUpButton = new JButton("<");
     private final JButton pageUpButton = new JButton("<<");
@@ -32,6 +34,7 @@ public class MainFrame extends JFrame {
 
 
     private final ByteInfoPanel byteInfoPanel = new ByteInfoPanel();
+    private final HexSearchService searchService = new HexSearchService();
 
     private final JToolBar toolBar = new JToolBar();
 
@@ -51,6 +54,9 @@ public class MainFrame extends JFrame {
 
     private long selectedByteOffset = -1;
     private boolean selectionUpdating = false;
+    private long selectionAnchorOffset = -1;
+    private long rangeStartOffset = -1;
+    private long rangeEndOffset = -1;
 
     public MainFrame() {
         initFrame();
@@ -79,6 +85,7 @@ public class MainFrame extends JFrame {
     private void initAction(){
         openButton.addActionListener(e -> openFile());
         findButton.addActionListener(e-> showFindDialog());
+        findByMask.addActionListener(e -> showMaskFindDialog());
         saveAsButton.addActionListener(e-> saveFileAs());
         saveButton.addActionListener(e -> saveCurrentFile());
 
@@ -110,6 +117,29 @@ public class MainFrame extends JFrame {
                 attemptClose();
             }
         });
+
+        table.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                int row = table.rowAtPoint(e.getPoint());
+                int column = table.columnAtPoint(e.getPoint());
+
+                if (row < 0 || column < 0) {
+                    return;
+                }
+
+                long offset = hexViewport.getByteOffset(row, column);
+                if (!isOffsetInsideFile(offset)) {
+                    return;
+                }
+
+                if (e.isShiftDown()) {
+                    extendSelectionTo(offset);
+                } else {
+                    selectSingleByte(offset);
+                }
+            }
+        });
     }
 
     private void initToolBar(){
@@ -117,6 +147,7 @@ public class MainFrame extends JFrame {
 
         toolBar.add(openButton);
         toolBar.add(findButton);
+        toolBar.add(findByMask);
         toolBar.add(saveButton);
         toolBar.add(saveAsButton);
         toolBar.addSeparator();
@@ -206,8 +237,7 @@ public class MainFrame extends JFrame {
             updateOffsetLabel();
 
             if(isOffsetInsideFile(0)) {
-                selectedByteOffset = 0;
-                restoreSelectionIfVisible();
+                selectSingleByte(0);
             } else {
                 clearSelectedByteInfo();
             }
@@ -400,6 +430,7 @@ public class MainFrame extends JFrame {
 
     private void clearSelectedByteInfo() {
         selectedByteOffset = -1;
+        clearRangeSelection();
         byteInfoPanel.clearSelectionInfo();
     }
 
@@ -433,6 +464,11 @@ public class MainFrame extends JFrame {
 
 
             byteInfoPanel.showSingleByte(selectedByteOffset, unsignedValue, value);
+            long blockLength = getSelectedRangeLength();
+            if (blockLength <= 0) {
+                blockLength = 1;
+            }
+            byteInfoPanel.showBlockLength(blockLength);
             updateMultiByteInfo();
 
         } catch (IOException e) {
@@ -498,7 +534,8 @@ public class MainFrame extends JFrame {
 
         selectionUpdating = true;
         try {
-            table.changeSelection(row, column, false, false);
+            applyRangeSelectionToTable();
+            updateSelectedByteInfo();
         } finally {
             selectionUpdating = false;
         }
@@ -601,8 +638,8 @@ public class MainFrame extends JFrame {
         }
 
         try {
-            byte[] pattern = parseHexPattern(input);
-            long foundOffset = findExactPattern(pattern);
+            byte[] pattern = searchService.parseExactPattern(input);
+            long foundOffset = searchService.findExactPattern(currentDocument, pattern);
 
             if (foundOffset < 0) {
                 showWarningMessage("Совпадение не найдено.");
@@ -618,77 +655,13 @@ public class MainFrame extends JFrame {
         }
     }
 
-    private byte[] parseHexPattern(String input) {
-        String normalized = input.trim().replaceAll("\\s+", " ");
-
-        if (normalized.isEmpty()) {
-            throw new IllegalArgumentException("Строка поиска пуста.");
-        }
-
-        String[] parts = normalized.split(" ");
-
-        byte[] result = new byte[parts.length];
-
-        for (int i = 0; i < parts.length; i++) {
-            String part = parts[i];
-
-            if (part.length() != 2) {
-                throw new IllegalArgumentException(
-                        "Каждый байт должен быть записан двумя hex-символами."
-                );
-            }
-
-            try {
-                int value = Integer.parseInt(part, 16);
-                result[i] = (byte) value;
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException(
-                        "Некорректное hex-значение: " + part
-                );
-            }
-        }
-
-        return result;
-    }
-
-    private long findExactPattern(byte[] pattern) throws IOException {
-        if (currentDocument == null) {
-            throw new IllegalStateException("Файл не открыт.");
-        }
-
-        if (pattern == null || pattern.length == 0) {
-            return -1;
-        }
-
-        long fileLength = currentDocument.length();
-        long maxStart = fileLength - pattern.length;
-
-        for (long start = 0; start <= maxStart; start++) {
-            boolean match = true;
-
-            for (int i = 0; i < pattern.length; i++) {
-                byte fileByte = currentDocument.readByte(start + i);
-                if (fileByte != pattern[i]) {
-                    match = false;
-                    break;
-                }
-            }
-
-            if (match) {
-                return start;
-            }
-        }
-
-        return -1;
-    }
 
     private void navigateToFoundOffset(long foundOffset) {
         long rowStartOffset = hexViewport.alignOffsetToRowStart(foundOffset);
         setViewportOffsetClamped(rowStartOffset);
 
         if (isOffsetInsideFile(foundOffset)) {
-            selectedByteOffset = foundOffset;
-            restoreSelectionIfVisible();
+            selectSingleByte(foundOffset);
         } else {
             clearSelectedByteInfo();
         }
@@ -873,6 +846,134 @@ public class MainFrame extends JFrame {
 
         } catch (IOException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+
+    private void showMaskFindDialog() {
+        String input = JOptionPane.showInputDialog(
+                this,
+                "Введите маску, ?? - любой байт",
+                "Поиск по маске",
+                JOptionPane.QUESTION_MESSAGE
+        );
+
+        if (input == null) {
+            return;
+        }
+
+        input = input.trim();
+        if (input.isEmpty()) {
+            showWarningMessage("Введите маску для поиска.");
+            return;
+        }
+
+        try {
+            MaskPattern maskPattern = searchService.parseMaskPattern(input);
+            long foundOffset = searchService.findMaskedPattern(currentDocument, maskPattern);
+
+            if (foundOffset < 0) {
+                showWarningMessage("Совпадение не найдено.");
+                return;
+            }
+
+            navigateToFoundOffset(foundOffset);
+
+        } catch (IllegalArgumentException e) {
+            showWarningMessage(e.getMessage());
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при поиске: " + e.getMessage());
+        }
+    }
+
+    private long getRangeMinOffset() {
+        if (rangeStartOffset < 0 || rangeEndOffset < 0) {
+            return -1;
+        }
+        return Math.min(rangeStartOffset, rangeEndOffset);
+    }
+
+    private long getRangeMaxOffset() {
+        if (rangeStartOffset < 0 || rangeEndOffset < 0) {
+            return -1;
+        }
+        return Math.max(rangeStartOffset, rangeEndOffset);
+    }
+
+    private long getSelectedRangeLength() {
+        long min = getRangeMinOffset();
+        long max = getRangeMaxOffset();
+
+        if (min < 0 || max < 0) {
+            return 0;
+        }
+
+        return max - min + 1;
+    }
+
+    private void selectSingleByte(long offset) {
+        selectedByteOffset = offset;
+        selectionAnchorOffset = offset;
+        rangeStartOffset = offset;
+        rangeEndOffset = offset;
+
+        applyRangeSelectionToTable();
+        updateSelectedByteInfo();
+    }
+
+    private void extendSelectionTo(long offset) {
+        if (selectionAnchorOffset < 0) {
+            selectSingleByte(offset);
+            return;
+        }
+
+        selectedByteOffset = offset;
+        rangeStartOffset = selectionAnchorOffset;
+        rangeEndOffset = offset;
+
+        applyRangeSelectionToTable();
+        updateSelectedByteInfo();
+    }
+
+    private void clearRangeSelection() {
+        selectionAnchorOffset = -1;
+        rangeStartOffset = -1;
+        rangeEndOffset = -1;
+    }
+
+    private void applyRangeSelectionToTable() {
+        long min = getRangeMinOffset();
+        long max = getRangeMaxOffset();
+
+        selectionUpdating = true;
+        try {
+            table.clearSelection();
+
+            if (min < 0 || max < 0) {
+                return;
+            }
+
+            long pageStart = hexViewport.getTableOffset();
+            long pageEnd = pageStart + hexViewport.getPageBytesSize() - 1;
+
+            long visibleStart = Math.max(min, pageStart);
+            long visibleEnd = Math.min(max, pageEnd);
+
+            if (visibleStart > visibleEnd) {
+                return;
+            }
+
+            for (long offset = visibleStart; offset <= visibleEnd; offset++) {
+                long relativeOffset = offset - pageStart;
+                int row = (int) (relativeOffset / hexViewport.getBytesPerRow());
+                int column = (int) (relativeOffset % hexViewport.getBytesPerRow());
+
+                table.addRowSelectionInterval(row, row);
+                table.addColumnSelectionInterval(column, column);
+            }
+
+        } finally {
+            selectionUpdating = false;
         }
     }
 }
