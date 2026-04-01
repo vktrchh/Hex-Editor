@@ -1,7 +1,10 @@
 package org.hexeditor.ui;
 
+import org.hexeditor.document.DeleteOption;
 import org.hexeditor.document.FileHexDocument;
 import org.hexeditor.document.HexDocument;
+import org.hexeditor.document.InsertOption;
+import org.hexeditor.editing.HexClipboard;
 import org.hexeditor.model.HexViewport;
 import org.hexeditor.search.HexSearchService;
 import org.hexeditor.search.MaskPattern;
@@ -23,6 +26,12 @@ public class MainFrame extends JFrame {
     private final JButton saveAsButton = new JButton("Сохранить как");
     private final JButton saveButton = new JButton("Сохранить");
     private final JButton findByMask = new JButton("Поиск по маске");
+    private final JButton deleteButton = new JButton("Удалить");
+    private final JButton makeZeroButton = new JButton("Обнулить");
+    private final JButton copyButton = new JButton("Копировать");
+    private final JButton cutButton = new JButton("Вырезать");
+    private final JButton pasteButton = new JButton("Вставить");
+    private final JButton pasteOverwriteButton = new JButton("Заменить");
     private final JButton startButton = new JButton("|<");
     private final JButton lineUpButton = new JButton("<");
     private final JButton pageUpButton = new JButton("<<");
@@ -41,6 +50,7 @@ public class MainFrame extends JFrame {
     private final JTable table = new JTable();
     private final JTable offsetTable = new JTable();
     private final JScrollPane scrollPane = new JScrollPane(table);
+    private final HexClipboard clipboard = new HexClipboard();
 
     private final JTextField bytesPerRowField = new JTextField("16", 4);
     private final JTextField visibleRowsField = new JTextField("16", 4);
@@ -88,6 +98,12 @@ public class MainFrame extends JFrame {
         findByMask.addActionListener(e -> showMaskFindDialog());
         saveAsButton.addActionListener(e-> saveFileAs());
         saveButton.addActionListener(e -> saveCurrentFile());
+        deleteButton.addActionListener(e -> deleteSelectedRange(DeleteOption.SHIFT_LEFT));
+        makeZeroButton.addActionListener(e -> deleteSelectedRange(DeleteOption.ZERO_FILL));
+        copyButton.addActionListener(e -> copySelectedRange());
+        cutButton.addActionListener(e -> cutSelectedRange());
+        pasteButton.addActionListener(e -> pasteClipboard(InsertOption.SHIFT_RIGHT));
+        pasteOverwriteButton.addActionListener(e -> pasteClipboard(InsertOption.OVERWRITE));
 
         startButton.addActionListener(e -> moveToStart());
         lineUpButton.addActionListener(e -> moveLineUp());
@@ -148,8 +164,15 @@ public class MainFrame extends JFrame {
         toolBar.add(openButton);
         toolBar.add(findButton);
         toolBar.add(findByMask);
+        toolBar.add(copyButton);
+        toolBar.add(cutButton);
+        toolBar.add(pasteButton);
+        toolBar.add(pasteOverwriteButton);
+        toolBar.add(deleteButton);
+        toolBar.add(makeZeroButton);
         toolBar.add(saveButton);
         toolBar.add(saveAsButton);
+
         toolBar.addSeparator();
 
         toolBar.add(startButton);
@@ -482,22 +505,60 @@ public class MainFrame extends JFrame {
             return;
         }
 
+        int minRow = table.getSelectionModel().getMinSelectionIndex();
+        int maxRow = table.getSelectionModel().getMaxSelectionIndex();
+        int minCol = table.getColumnModel().getSelectionModel().getMinSelectionIndex();
+        int maxCol = table.getColumnModel().getSelectionModel().getMaxSelectionIndex();
+
+        if (minRow < 0 || maxRow < 0 || minCol < 0 || maxCol < 0) {
+            clearSelectedByteInfo();
+            return;
+        }
+
+        long minOffset = Long.MAX_VALUE;
+        long maxOffset = Long.MIN_VALUE;
+        long activeOffset = -1;
+
         int selectedRow = table.getSelectedRow();
         int selectedColumn = table.getSelectedColumn();
 
-        if (selectedRow < 0 || selectedColumn < 0) {
+        for (int row = minRow; row <= maxRow; row++) {
+            for (int col = minCol; col <= maxCol; col++) {
+                if (!table.isCellSelected(row, col)) {
+                    continue;
+                }
+
+                long offset = hexViewport.getByteOffset(row, col);
+                if (!isOffsetInsideFile(offset)) {
+                    continue;
+                }
+
+                minOffset = Math.min(minOffset, offset);
+                maxOffset = Math.max(maxOffset, offset);
+
+                if (row == selectedRow && col == selectedColumn) {
+                    activeOffset = offset;
+                }
+            }
+        }
+
+        if (minOffset == Long.MAX_VALUE) {
             clearSelectedByteInfo();
             return;
         }
 
-        long offset = hexViewport.getByteOffset(selectedRow, selectedColumn);
-
-        if (!isOffsetInsideFile(offset)) {
-            clearSelectedByteInfo();
-            return;
+        if (activeOffset < 0) {
+            activeOffset = minOffset;
         }
 
-        selectedByteOffset = offset;
+        selectedByteOffset = activeOffset;
+        rangeStartOffset = minOffset;
+        rangeEndOffset = maxOffset;
+
+        if (selectionAnchorOffset < 0 || !isOffsetInsideFile(selectionAnchorOffset)) {
+            selectionAnchorOffset = minOffset;
+        }
+
         updateSelectedByteInfo();
     }
 
@@ -527,10 +588,6 @@ public class MainFrame extends JFrame {
             clearSelectedByteInfo();
             return;
         }
-
-        long relativeOffset = selectedByteOffset - hexViewport.getTableOffset();
-        int row = (int) (relativeOffset / hexViewport.getBytesPerRow());
-        int column = (int) (relativeOffset % hexViewport.getBytesPerRow());
 
         selectionUpdating = true;
         try {
@@ -970,10 +1027,176 @@ public class MainFrame extends JFrame {
 
                 table.addRowSelectionInterval(row, row);
                 table.addColumnSelectionInterval(column, column);
+
             }
 
         } finally {
             selectionUpdating = false;
         }
     }
+    private void deleteSelectedRange(DeleteOption option) {
+        if (currentDocument == null) {
+            showWarningMessage("Сначала откройте файл.");
+            return;
+        }
+
+        long start = getRangeMinOffset();
+        long length = getSelectedRangeLength();
+
+        if (start < 0 || length <= 0) {
+            showWarningMessage("Сначала выделите байт или диапазон.");
+            return;
+        }
+
+        try {
+            deleteRangeFromDocument(start, length, option);
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при удалении: " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            showWarningMessage(e.getMessage());
+        }
+    }
+
+    private void updateSelectionAfterDelete(long start, long deletedLength, DeleteOption option) throws IOException {
+        long docLength = currentDocument.length();
+
+        if (docLength == 0) {
+            clearSelectedByteInfo();
+            return;
+        }
+
+        if (option == DeleteOption.ZERO_FILL) {
+            long newEnd = Math.min(start + deletedLength - 1, docLength - 1);
+
+            selectedByteOffset = start;
+            selectionAnchorOffset = start;
+            rangeStartOffset = start;
+            rangeEndOffset = newEnd;
+
+            applyRangeSelectionToTable();
+            updateSelectedByteInfo();
+            return;
+        }
+
+        // SHIFT_LEFT
+        long newOffset = Math.min(start, docLength - 1);
+        selectSingleByte(newOffset);
+    }
+
+    private byte[] readSelectedRangeBytes() throws IOException {
+        long start = getRangeMinOffset();
+        long length = getSelectedRangeLength();
+
+        if (start < 0 || length <= 0) {
+            throw new IllegalArgumentException("Нет выделенного диапазона.");
+        }
+
+        if (length > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Слишком большой диапазон для копирования.");
+        }
+
+        byte[] data = new byte[(int) length];
+
+        for (int i = 0; i < data.length; i++) {
+            data[i] = currentDocument.readByte(start + i);
+        }
+
+        return data;
+    }
+
+    private void copySelectedRange() {
+        if (currentDocument == null) {
+            showWarningMessage("Сначала откройте файл.");
+            return;
+        }
+
+        try {
+            byte[] data = readSelectedRangeBytes();
+            clipboard.setBytes(data);
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при копировании: " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            showWarningMessage(e.getMessage());
+        }
+    }
+
+    private void deleteRangeFromDocument(long start, long length, DeleteOption option) throws IOException {
+        currentDocument.delete(start, length, option);
+        updateSelectionAfterDelete(start, length, option);
+        setViewportOffsetClamped(hexViewport.getTableOffset());
+        updateModifiedStatus();
+    }
+
+    private void cutSelectedRange() {
+        if (currentDocument == null) {
+            showWarningMessage("Сначала откройте файл.");
+            return;
+        }
+
+        long start = getRangeMinOffset();
+        long length = getSelectedRangeLength();
+
+        if (start < 0 || length <= 0) {
+            showWarningMessage("Сначала выделите байт или диапазон.");
+            return;
+        }
+
+        try {
+            byte[] data = readSelectedRangeBytes();
+            clipboard.setBytes(data);
+
+            deleteRangeFromDocument(start, length, DeleteOption.SHIFT_LEFT);
+
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при вырезании: " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            showWarningMessage(e.getMessage());
+        }
+    }
+
+    private void pasteClipboard(InsertOption option) {
+        if (currentDocument == null) {
+            showWarningMessage("Сначала откройте файл.");
+            return;
+        }
+
+        if (!clipboard.hasData()) {
+            showWarningMessage("Буфер пуст.");
+            return;
+        }
+
+        long offset = selectedByteOffset >= 0 ? selectedByteOffset : 0;
+        byte[] data = clipboard.getBytes();
+
+        try {
+            currentDocument.insert(offset, data, option);
+            updateSelectionAfterPaste(offset, data.length);
+            setViewportOffsetClamped(hexViewport.getTableOffset());
+            updateModifiedStatus();
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при вставке: " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            showWarningMessage(e.getMessage());
+        }
+    }
+
+    private void updateSelectionAfterPaste(long startOffset, long insertedLength) throws IOException {
+        long docLength = currentDocument.length();
+
+        if (docLength == 0) {
+            clearSelectedByteInfo();
+            return;
+        }
+
+        long newEnd = Math.min(startOffset + insertedLength - 1, docLength - 1);
+
+        selectedByteOffset = startOffset;
+        selectionAnchorOffset = startOffset;
+        rangeStartOffset = startOffset;
+        rangeEndOffset = newEnd;
+
+        applyRangeSelectionToTable();
+        updateSelectedByteInfo();
+    }
+
 }

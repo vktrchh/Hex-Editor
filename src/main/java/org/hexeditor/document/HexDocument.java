@@ -16,4 +16,7 @@ public interface HexDocument extends Closeable {
     }
 
     void saveTo(File file) throws IOException;
+
+    void delete(long startOffset, long length, DeleteOption deleteOption) throws IOException;
+    void insert(long offset, byte[] data, InsertOption insertOption) throws  IOException;
 }
