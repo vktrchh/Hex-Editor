@@ -21,31 +21,13 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 public class MainFrame extends JFrame {
-    private final JButton openButton = new JButton("Открыть");
-    private final JButton findButton = new JButton("Найти");
-    private final JButton saveAsButton = new JButton("Сохранить как");
-    private final JButton saveButton = new JButton("Сохранить");
-    private final JButton findByMask = new JButton("Поиск по маске");
-    private final JButton deleteButton = new JButton("Удалить");
-    private final JButton makeZeroButton = new JButton("Обнулить");
-    private final JButton copyButton = new JButton("Копировать");
-    private final JButton cutButton = new JButton("Вырезать");
-    private final JButton pasteButton = new JButton("Вставить");
-    private final JButton pasteOverwriteButton = new JButton("Заменить");
-    private final JButton startButton = new JButton("|<");
-    private final JButton lineUpButton = new JButton("<");
-    private final JButton pageUpButton = new JButton("<<");
-    private final JButton pageDownButton = new JButton(">>");
-    private final JButton lineDownButton = new JButton(">");
-    private final JButton endButton = new JButton(">|");
-
     private final JLabel saveStatus = new JLabel("Сохранено");
-
 
     private final ByteInfoPanel byteInfoPanel = new ByteInfoPanel();
     private final HexSearchService searchService = new HexSearchService();
 
     private final JToolBar toolBar = new JToolBar();
+    private final MainMenuBar mainMenuBar = new MainMenuBar();
 
     private final JTable table = new JTable();
     private final JTable offsetTable = new JTable();
@@ -70,6 +52,7 @@ public class MainFrame extends JFrame {
 
     public MainFrame() {
         initFrame();
+        setJMenuBar(mainMenuBar);
         initToolBar();
         initTables();
         initLayout();
@@ -93,24 +76,27 @@ public class MainFrame extends JFrame {
     }
 
     private void initAction(){
-        openButton.addActionListener(e -> openFile());
-        findButton.addActionListener(e-> showFindDialog());
-        findByMask.addActionListener(e -> showMaskFindDialog());
-        saveAsButton.addActionListener(e-> saveFileAs());
-        saveButton.addActionListener(e -> saveCurrentFile());
-        deleteButton.addActionListener(e -> deleteSelectedRange(DeleteOption.SHIFT_LEFT));
-        makeZeroButton.addActionListener(e -> deleteSelectedRange(DeleteOption.ZERO_FILL));
-        copyButton.addActionListener(e -> copySelectedRange());
-        cutButton.addActionListener(e -> cutSelectedRange());
-        pasteButton.addActionListener(e -> pasteClipboard(InsertOption.SHIFT_RIGHT));
-        pasteOverwriteButton.addActionListener(e -> pasteClipboard(InsertOption.OVERWRITE));
+        mainMenuBar.getOpenItem().addActionListener(e -> openFile());
+        mainMenuBar.getSaveItem().addActionListener(e -> saveCurrentFile());
+        mainMenuBar.getSaveAsItem().addActionListener(e -> saveFileAs());
+        mainMenuBar.getExitItem().addActionListener(e -> attemptClose());
 
-        startButton.addActionListener(e -> moveToStart());
-        lineUpButton.addActionListener(e -> moveLineUp());
-        pageUpButton.addActionListener(e -> movePageUp());
-        pageDownButton.addActionListener(e -> movePageDown());
-        lineDownButton.addActionListener(e -> moveLineDown());
-        endButton.addActionListener(e -> moveToEnd());
+        mainMenuBar.getCopyItem().addActionListener(e -> copySelectedRange());
+        mainMenuBar.getCutItem().addActionListener(e -> cutSelectedRange());
+        mainMenuBar.getPasteItem().addActionListener(e -> pasteClipboard(InsertOption.SHIFT_RIGHT));
+        mainMenuBar.getPasteOverwriteItem().addActionListener(e -> pasteClipboard(InsertOption.OVERWRITE));
+        mainMenuBar.getInsertHexItem().addActionListener(e -> showInsertHexDialog());
+        mainMenuBar.getDeleteItem().addActionListener(e -> deleteSelectedRange(DeleteOption.SHIFT_LEFT));
+        mainMenuBar.getMakeZeroItem().addActionListener(e -> deleteSelectedRange(DeleteOption.ZERO_FILL));
+
+        mainMenuBar.getSearchItem().addActionListener(e -> showSearchDialog());
+
+        mainMenuBar.getStartItem().addActionListener(e -> moveToStart());
+        mainMenuBar.getLineUpItem().addActionListener(e -> moveLineUp());
+        mainMenuBar.getPageUpItem().addActionListener(e -> movePageUp());
+        mainMenuBar.getPageDownItem().addActionListener(e -> movePageDown());
+        mainMenuBar.getLineDownItem().addActionListener(e -> moveLineDown());
+        mainMenuBar.getEndItem().addActionListener(e -> moveToEnd());
 
         bytesPerRowField.addActionListener(e -> applyViewportSettings());
         visibleRowsField.addActionListener(e -> applyViewportSettings());
@@ -160,29 +146,6 @@ public class MainFrame extends JFrame {
 
     private void initToolBar(){
         toolBar.setFloatable(false);
-
-        toolBar.add(openButton);
-        toolBar.add(findButton);
-        toolBar.add(findByMask);
-        toolBar.add(copyButton);
-        toolBar.add(cutButton);
-        toolBar.add(pasteButton);
-        toolBar.add(pasteOverwriteButton);
-        toolBar.add(deleteButton);
-        toolBar.add(makeZeroButton);
-        toolBar.add(saveButton);
-        toolBar.add(saveAsButton);
-
-        toolBar.addSeparator();
-
-        toolBar.add(startButton);
-        toolBar.add(lineDownButton);
-        toolBar.add(lineUpButton);
-        toolBar.add(pageDownButton);
-        toolBar.add(pageUpButton);
-        toolBar.add(endButton);
-
-        toolBar.addSeparator();
 
         toolBar.add(new JLabel("Байт в строке:"));
         toolBar.add(bytesPerRowField);
@@ -676,43 +639,6 @@ public class MainFrame extends JFrame {
         }
     }
 
-    private void showFindDialog() {
-        String input = JOptionPane.showInputDialog(
-                this,
-                "Введите байты в hex",
-                "Точный поиск",
-                JOptionPane.QUESTION_MESSAGE
-        );
-
-        if (input == null) {
-            return;
-        }
-
-        input = input.trim();
-        if (input.isEmpty()) {
-            showWarningMessage("Введите последовательность байтов для поиска.");
-            return;
-        }
-
-        try {
-            byte[] pattern = searchService.parseExactPattern(input);
-            long foundOffset = searchService.findExactPattern(currentDocument, pattern);
-
-            if (foundOffset < 0) {
-                showWarningMessage("Совпадение не найдено.");
-                return;
-            }
-
-            navigateToFoundOffset(foundOffset);
-
-        } catch (IllegalArgumentException e) {
-            showWarningMessage(e.getMessage());
-        } catch (IOException e) {
-            showErrorMessage("Ошибка при поиске: " + e.getMessage());
-        }
-    }
-
-
     private void navigateToFoundOffset(long foundOffset) {
         long rowStartOffset = hexViewport.alignOffsetToRowStart(foundOffset);
         setViewportOffsetClamped(rowStartOffset);
@@ -876,42 +802,42 @@ public class MainFrame extends JFrame {
 
         File tempFile = File.createTempFile("hexedit_", ".tmp", parentDir);
 
+        currentDocument.saveTo(tempFile);
+
+        closeCurrentDocument();
+
+        Path tempPath = tempFile.toPath();
+        Path targetPath = targetFile.toPath();
+
         try {
-            currentDocument.saveTo(tempFile);
-
-            closeCurrentDocument();
-
-            Path tempPath = tempFile.toPath();
-            Path targetPath = targetFile.toPath();
-
-            try {
-                Files.move(
-                        tempPath,
-                        targetPath,
-                        StandardCopyOption.REPLACE_EXISTING,
-                        StandardCopyOption.ATOMIC_MOVE
-                );
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(
-                        tempPath,
-                        targetPath,
-                        StandardCopyOption.REPLACE_EXISTING
-                );
-            }
-
-            loadFile(targetFile);
-
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+            Files.move(
+                    tempPath,
+                    targetPath,
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE
+            );
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(
+                    tempPath,
+                    targetPath,
+                    StandardCopyOption.REPLACE_EXISTING
+            );
         }
+
+        loadFile(targetFile);
+
     }
 
+    private void showSearchDialog() {
+        if (currentDocument == null) {
+            showWarningMessage("Сначала откройте файл.");
+            return;
+        }
 
-    private void showMaskFindDialog() {
         String input = JOptionPane.showInputDialog(
                 this,
-                "Введите маску, ?? - любой байт",
-                "Поиск по маске",
+                "Введите последовательность байтов или маску. ?? - любой байт",
+                "Поиск",
                 JOptionPane.QUESTION_MESSAGE
         );
 
@@ -921,7 +847,7 @@ public class MainFrame extends JFrame {
 
         input = input.trim();
         if (input.isEmpty()) {
-            showWarningMessage("Введите маску для поиска.");
+            showWarningMessage("Введите последовательность байтов или маску для поиска.");
             return;
         }
 
@@ -1165,14 +1091,10 @@ public class MainFrame extends JFrame {
             return;
         }
 
-        long offset = selectedByteOffset >= 0 ? selectedByteOffset : 0;
         byte[] data = clipboard.getBytes();
 
         try {
-            currentDocument.insert(offset, data, option);
-            updateSelectionAfterPaste(offset, data.length);
-            setViewportOffsetClamped(hexViewport.getTableOffset());
-            updateModifiedStatus();
+            insertBytesAtSelection(data, option);
         } catch (IOException e) {
             showErrorMessage("Ошибка при вставке: " + e.getMessage());
         } catch (IllegalArgumentException e) {
@@ -1199,4 +1121,70 @@ public class MainFrame extends JFrame {
         updateSelectedByteInfo();
     }
 
+    private void showInsertHexDialog() {
+        if (currentDocument == null) {
+            showWarningMessage("Сначала откройте файл.");
+            return;
+        }
+
+        JTextField hexField = new JTextField(20);
+        JComboBox<InsertOption> modeBox = new JComboBox<>(InsertOption.values());
+        modeBox.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+
+                if (value == InsertOption.SHIFT_RIGHT) {
+                    setText("Со сдвигом");
+                } else if (value == InsertOption.OVERWRITE) {
+                    setText("С заменой");
+                }
+
+                return this;
+            }
+        });
+
+        JPanel panel = new JPanel(new GridLayout(0, 1, 0, 8));
+        panel.add(new JLabel("Введите байты в hex, например: AA FF 10"));
+        panel.add(hexField);
+        panel.add(new JLabel("Режим вставки:"));
+        panel.add(modeBox);
+
+        int result = JOptionPane.showConfirmDialog(
+                this,
+                panel,
+                "Вставить hex-байты",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        );
+
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        String input = hexField.getText().trim();
+        if (input.isEmpty()) {
+            showWarningMessage("Введите хотя бы один байт.");
+            return;
+        }
+
+        try {
+            byte[] data = searchService.parseExactPattern(input);
+            InsertOption option = (InsertOption) modeBox.getSelectedItem();
+            insertBytesAtSelection(data, option);
+        } catch (IllegalArgumentException e) {
+            showWarningMessage(e.getMessage());
+        } catch (IOException e) {
+            showErrorMessage("Ошибка при вставке: " + e.getMessage());
+        }
+    }
+
+    private void insertBytesAtSelection(byte[] data, InsertOption option) throws IOException {
+        long offset = selectedByteOffset >= 0 ? selectedByteOffset : 0;
+
+        currentDocument.insert(offset, data, option);
+        updateSelectionAfterPaste(offset, data.length);
+        setViewportOffsetClamped(hexViewport.getTableOffset());
+        updateModifiedStatus();
+    }
 }
