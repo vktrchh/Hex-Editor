@@ -2,6 +2,10 @@ package org.hexeditor.document;
 
 import java.util.Arrays;
 
+/*
+    Класс хранит байты, которые были добавлены или перезаписаны.
+ */
+
 public class AddBuffer {
     private byte[] data = new byte[1024];
     private int size = 0;
@@ -26,10 +30,6 @@ public class AddBuffer {
         }
 
         return data[(int) offset];
-    }
-
-    public int size() {
-        return size;
     }
 
     private void ensureCapacity(int needed) {

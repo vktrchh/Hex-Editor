@@ -4,6 +4,9 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 
+/*
+    Интерфейс определяющий основные операции работы с байтами
+ */
 public interface HexDocument extends Closeable {
     long length() throws IOException;
     byte readByte(long offset) throws IOException;

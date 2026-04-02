@@ -2,16 +2,15 @@ package org.hexeditor.ui;
 
 import org.hexeditor.document.DeleteOption;
 import org.hexeditor.document.FileHexDocument;
-import org.hexeditor.document.HexDocument;
 import org.hexeditor.document.InsertOption;
 import org.hexeditor.editing.HexClipboard;
-import org.hexeditor.model.HexViewport;
-import org.hexeditor.model.SelectionModel;
+import org.hexeditor.model.EditorState;
 import org.hexeditor.search.HexSearchService;
 import org.hexeditor.search.MaskPattern;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
@@ -20,6 +19,12 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+
+/*
+    Главное окно hex-редактора.
+    Отвечает за сборку интерфейса, открытие, сохранения файла,
+    навигацию, выделение байтов и за операции редактирования.
+ */
 
 public class MainFrame extends JFrame {
     private final JLabel saveStatus = new JLabel("Сохранено");
@@ -38,15 +43,7 @@ public class MainFrame extends JFrame {
     private final JTextField bytesPerRowField = new JTextField("16", 4);
     private final JTextField visibleRowsField = new JTextField("16", 4);
 
-    private final HexViewport hexViewport = new HexViewport();
-    private final SelectionModel selectionModel = new SelectionModel();
-
-    private File currentFile;
-    private HexDocument currentDocument;
-    private HexTableModel currentHexModel;
-    private OffsetTableModel currentOffsetModel;
-
-    private boolean selectionUpdating = false;
+    private final EditorState editorState = new EditorState();
 
     public MainFrame() {
         initFrame();
@@ -56,7 +53,7 @@ public class MainFrame extends JFrame {
         initLayout();
         initAction();
         syncTableAppearance();
-        byteInfoPanel.setViewOffset(hexViewport.getTableOffset());
+        byteInfoPanel.setViewOffset(editorState.getHexViewport().getTableOffset());
     }
 
     private void initFrame(){
@@ -120,7 +117,7 @@ public class MainFrame extends JFrame {
 
         table.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
-            public void mousePressed(java.awt.event.MouseEvent e) {
+            public void mousePressed(MouseEvent e) {
                 int row = table.rowAtPoint(e.getPoint());
                 int column = table.columnAtPoint(e.getPoint());
 
@@ -128,13 +125,15 @@ public class MainFrame extends JFrame {
                     return;
                 }
 
-                long offset = hexViewport.getByteOffset(row, column);
+                long offset = editorState.getHexViewport().getByteOffset(row, column);
                 if (!isOffsetInsideFile(offset)) {
                     return;
                 }
 
                 if (e.isShiftDown()) {
-                    extendSelectionTo(offset);
+                    editorState.getSelectionModel().extendSelectionTo(offset);
+                    applyRangeSelectionToTable();
+                    updateSelectedByteInfo();
                 } else {
                     selectSingleByte(offset);
                 }
@@ -144,7 +143,6 @@ public class MainFrame extends JFrame {
 
     private void initToolBar(){
         toolBar.setFloatable(false);
-
         toolBar.add(new JLabel("Байт в строке:"));
         toolBar.add(bytesPerRowField);
 
@@ -176,17 +174,16 @@ public class MainFrame extends JFrame {
 
 
     private void closeCurrentDocument() {
-        if (currentDocument == null) {
+        if (editorState.getCurrentDocument() == null) {
             return;
         }
 
         try {
-            currentDocument.close();
+            editorState.getCurrentDocument().close();
         } catch (IOException e) {
             showErrorMessage("Ошибка при закрытии файла: " + e.getMessage());
         } finally {
-            currentDocument = null;
-            currentFile = null;
+            editorState.clearDocumentState();
         }
     }
 
@@ -194,17 +191,21 @@ public class MainFrame extends JFrame {
         try {
             closeCurrentDocument();
 
-            currentDocument = new FileHexDocument(file);
-            currentFile = file;
+            editorState.setCurrentDocument(new FileHexDocument(file));
+            editorState.setCurrentFile(file);
 
-            hexViewport.setTableOffset(0);
-            currentHexModel = new HexTableModel(currentDocument, hexViewport);
-            currentOffsetModel = new OffsetTableModel(hexViewport);
+            editorState.getHexViewport().setTableOffset(0);
+            editorState.setCurrentHexModel(
+                    new HexTableModel(editorState.getCurrentDocument(), editorState.getHexViewport())
+            );
+            editorState.setCurrentOffsetModel(
+                    new OffsetTableModel(editorState.getHexViewport())
+            );
 
-            table.setModel(currentHexModel);
-            offsetTable.setModel(currentOffsetModel);
-            currentHexModel.addTableModelListener(e -> {
-                if (selectionModel.getSelectedByteOffset() >= 0) {
+            table.setModel(editorState.getCurrentHexModel());
+            offsetTable.setModel(editorState.getCurrentOffsetModel());
+            editorState.getCurrentHexModel().addTableModelListener(e -> {
+                if (editorState.getSelectionModel().getSelectedByteOffset() >= 0) {
                     updateSelectedByteInfo();
                 }
                 updateModifiedStatus();
@@ -218,7 +219,7 @@ public class MainFrame extends JFrame {
             scrollPane.getViewport().setViewPosition(new Point(0, 0));
             scrollPane.getRowHeader().setViewPosition(new Point(0, 0));
 
-            byteInfoPanel.setViewOffset(hexViewport.getTableOffset());
+            byteInfoPanel.setViewOffset(editorState.getHexViewport().getTableOffset());
 
             if(isOffsetInsideFile(0)) {
                 selectSingleByte(0);
@@ -251,19 +252,19 @@ public class MainFrame extends JFrame {
             int bytesPerRow = Integer.parseInt(bytesPerRowField.getText().trim());
             int visibleRows = Integer.parseInt(visibleRowsField.getText().trim());
 
-            hexViewport.setBytesPerRow(bytesPerRow);
-            hexViewport.setVisibleRows(visibleRows);
+            editorState.getHexViewport().setBytesPerRow(bytesPerRow);
+            editorState.getHexViewport().setVisibleRows(visibleRows);
 
-            if (currentHexModel != null) {
-                currentHexModel.fireTableStructureChanged();
+            if (editorState.getCurrentHexModel() != null) {
+                editorState.getCurrentHexModel().fireTableStructureChanged();
 
             }
 
-            if (currentOffsetModel != null) {
-                currentOffsetModel.fireTableStructureChanged();
+            if (editorState.getCurrentOffsetModel() != null) {
+                editorState.getCurrentOffsetModel().fireTableStructureChanged();
             }
 
-            setViewportOffsetClamped(hexViewport.getTableOffset());
+            setViewportOffsetClamped(editorState.getHexViewport().getTableOffset());
             syncTableAppearance();
 
             scrollPane.getViewport().setViewPosition(new Point(0, 0));
@@ -304,33 +305,33 @@ public class MainFrame extends JFrame {
     }
 
     private void refreshDataView() {
-        if (currentHexModel != null) {
-            currentHexModel.fireTableDataChanged();
+        if (editorState.getCurrentHexModel() != null) {
+            editorState.getCurrentHexModel().fireTableDataChanged();
         }
 
-        if (currentOffsetModel != null) {
-            currentOffsetModel.fireTableDataChanged();
+        if (editorState.getCurrentOffsetModel() != null) {
+            editorState.getCurrentOffsetModel().fireTableDataChanged();
         }
 
-        byteInfoPanel.setViewOffset(hexViewport.getTableOffset());
+        byteInfoPanel.setViewOffset(editorState.getHexViewport().getTableOffset());
         restoreSelectionIfVisible();
     }
 
     private long getMaxViewportOffset() {
-        if (currentDocument == null) {
+        if (editorState.getCurrentDocument() == null) {
             return 0;
         }
 
         try {
-            long fileLength = currentDocument.length();
-            long pageSize = hexViewport.getPageBytesSize();
+            long fileLength = editorState.getCurrentDocument().length();
+            long pageSize = editorState.getHexViewport().getPageBytesSize();
 
             if (fileLength <= pageSize) {
                 return 0;
             }
 
             long maxOffset = fileLength - pageSize;
-            return hexViewport.alignOffsetToRowStart(maxOffset);
+            return editorState.getHexViewport().alignOffsetToRowStart(maxOffset);
         } catch (IOException e) {
             showErrorMessage("Ошибка при получении размера файла: " + e.getMessage());
             return 0;
@@ -339,19 +340,10 @@ public class MainFrame extends JFrame {
 
     private void setViewportOffsetClamped(long requestedOffset) {
         long maxOffset = getMaxViewportOffset();
+        long clampedOffset = Math.max(0, Math.min(requestedOffset, maxOffset));
 
-        long clampedOffset = requestedOffset;
-
-        if (clampedOffset < 0) {
-            clampedOffset = 0;
-        }
-
-        if (clampedOffset > maxOffset) {
-            clampedOffset = maxOffset;
-        }
-
-        clampedOffset = hexViewport.alignOffsetToRowStart(clampedOffset);
-        hexViewport.setTableOffset(clampedOffset);
+        clampedOffset = editorState.getHexViewport().alignOffsetToRowStart(clampedOffset);
+        editorState.getHexViewport().setTableOffset(clampedOffset);
 
         refreshDataView();
     }
@@ -360,22 +352,22 @@ public class MainFrame extends JFrame {
     }
 
     private void moveLineUp() {
-        long newOffset = hexViewport.getTableOffset() - hexViewport.getBytesPerRow();
+        long newOffset = editorState.getHexViewport().getTableOffset() - editorState.getHexViewport().getBytesPerRow();
         setViewportOffsetClamped(newOffset);
     }
 
     private void moveLineDown() {
-        long newOffset = hexViewport.getTableOffset() + hexViewport.getBytesPerRow();
+        long newOffset = editorState.getHexViewport().getTableOffset() + editorState.getHexViewport().getBytesPerRow();
         setViewportOffsetClamped(newOffset);
     }
 
     private void movePageUp() {
-        long newOffset = hexViewport.getTableOffset() - hexViewport.getPageBytesSize();
+        long newOffset = editorState.getHexViewport().getTableOffset() - editorState.getHexViewport().getPageBytesSize();
         setViewportOffsetClamped(newOffset);
     }
 
     private void movePageDown() {
-        long newOffset = hexViewport.getTableOffset() + hexViewport.getPageBytesSize();
+        long newOffset = editorState.getHexViewport().getTableOffset() + editorState.getHexViewport().getPageBytesSize();
         setViewportOffsetClamped(newOffset);
     }
 
@@ -389,46 +381,18 @@ public class MainFrame extends JFrame {
         super.dispose();
     }
 
-    private void showErrorMessage(String message){
-        JOptionPane.showMessageDialog(
-                this,
-                message,
-                "Ошибка",
-                JOptionPane.ERROR_MESSAGE
-        );
-    }
-
-    private void showWarningMessage(String  message){
-        JOptionPane.showMessageDialog(
-                this,
-                message,
-                "Предупреждение",
-                JOptionPane.WARNING_MESSAGE
-        );
-    }
-
-    private void showInfoMessage() {
-        JOptionPane.showMessageDialog(
-                this,
-                "Файл успешно сохранен.",
-                "Информация",
-                JOptionPane.INFORMATION_MESSAGE
-        );
-    }
-
-
     private void clearSelectedByteInfo() {
-        selectionModel.clear();
+        editorState.getSelectionModel().clear();
         byteInfoPanel.clearSelectionInfo();
     }
 
     private boolean isOffsetInsideFile(long offset) {
-        if (currentDocument == null || offset < 0) {
+        if (editorState.getCurrentDocument() == null || offset < 0) {
             return false;
         }
 
         try {
-            return offset < currentDocument.length();
+            return offset < editorState.getCurrentDocument().length();
         } catch (IOException e) {
             showErrorMessage("Ошибка при получении размера файла: " + e.getMessage());
             return false;
@@ -436,24 +400,24 @@ public class MainFrame extends JFrame {
     }
 
     private void updateSelectedByteInfo() {
-        long selectedByteOffset = selectionModel.getSelectedByteOffset();
-        if (currentDocument == null || selectedByteOffset < 0) {
+        long selectedByteOffset = editorState.getSelectionModel().getSelectedByteOffset();
+        if (editorState.getCurrentDocument() == null || selectedByteOffset < 0) {
             clearSelectedByteInfo();
             return;
         }
 
         try {
-            if (selectedByteOffset >= currentDocument.length()) {
+            if (selectedByteOffset >= editorState.getCurrentDocument().length()) {
                 clearSelectedByteInfo();
                 return;
             }
 
-            byte value = currentDocument.readByte(selectedByteOffset);
+            byte value = editorState.getCurrentDocument().readByte(selectedByteOffset);
             int unsignedValue = value & 0xFF;
 
 
             byteInfoPanel.showSingleByte(selectedByteOffset, unsignedValue, value);
-            long blockLength = selectionModel.getSelectedRangeLength();
+            long blockLength = editorState.getSelectionModel().getSelectedRangeLength();
             blockLength = blockLength <= 1 ? 1: blockLength;
 
             byteInfoPanel.showBlockLength(blockLength);
@@ -466,7 +430,7 @@ public class MainFrame extends JFrame {
     }
 
     private void updateSelectedByteFromTable() {
-        if (selectionUpdating || currentDocument == null) {
+        if (editorState.isSelectionUpdating() || editorState.getCurrentDocument() == null) {
             return;
         }
 
@@ -493,7 +457,7 @@ public class MainFrame extends JFrame {
                     continue;
                 }
 
-                long offset = hexViewport.getByteOffset(row, col);
+                long offset = editorState.getHexViewport().getByteOffset(row, col);
                 if (!isOffsetInsideFile(offset)) {
                     continue;
                 }
@@ -516,76 +480,65 @@ public class MainFrame extends JFrame {
             activeOffset = minOffset;
         }
 
-        long anchorOffset = selectionModel.getSelectionAnchorOffset();
+        long anchorOffset = editorState.getSelectionModel().getSelectionAnchorOffset();
 
         if (anchorOffset < 0 || !isOffsetInsideFile(anchorOffset)) {
             anchorOffset = minOffset;
         }
-        selectionModel.setRange(activeOffset, anchorOffset, minOffset, maxOffset);
+        editorState.getSelectionModel().setRange(activeOffset, anchorOffset, minOffset, maxOffset);
 
         updateSelectedByteInfo();
     }
 
-    private boolean isSelectedByteVisibleInViewport() {
-        long selectedByteOffset = selectionModel.getSelectedByteOffset();
-
-        if (selectedByteOffset < 0) {
-            return false;
-        }
-
-        long pageStart = hexViewport.getTableOffset();
-        long pageEnd = pageStart + hexViewport.getPageBytesSize();
-
-        return selectedByteOffset >= pageStart && selectedByteOffset < pageEnd;
-    }
-
     private void restoreSelectionIfVisible() {
-        if (selectionModel.getSelectedByteOffset() < 0) {
+        long selectedByteOffset = editorState.getSelectionModel().getSelectedByteOffset();
+        if (selectedByteOffset < 0) {
             return;
         }
 
-        if (!isSelectedByteVisibleInViewport()) {
-            selectionUpdating = true;
+        long pageStart = editorState.getHexViewport().getTableOffset();
+        long pageEnd = pageStart + editorState.getHexViewport().getPageBytesSize();
+
+        if (!(selectedByteOffset >= pageStart && selectedByteOffset < pageEnd)) {
+            editorState.setSelectionUpdating(true);
             try {
                 table.clearSelection();
             } finally {
-                selectionUpdating = false;
+                editorState.setSelectionUpdating(false);
             }
             clearSelectedByteInfo();
             return;
         }
 
-        selectionUpdating = true;
+        editorState.setSelectionUpdating(true);
         try {
             applyRangeSelectionToTable();
             updateSelectedByteInfo();
         } finally {
-            selectionUpdating = false;
+            editorState.setSelectionUpdating(false);
         }
-
-        updateSelectedByteInfo();
     }
 
     private byte[] readByteBlock(long startOffset, int size) throws IOException {
-        if (currentDocument == null || startOffset < 0) {
+        if (editorState.getCurrentDocument() == null || startOffset < 0) {
             return null;
         }
 
-        long fileLength = currentDocument.length();
+        long fileLength = editorState.getCurrentDocument().length();
         if (startOffset + size > fileLength) {
             return null;
         }
 
         byte[] data = new byte[size];
         for (int i = 0; i < size; i++) {
-            data[i] = currentDocument.readByte(startOffset + i);
+            data[i] = editorState.getCurrentDocument().readByte(startOffset + i);
         }
 
         return data;
     }
 
     private void updateMultiByteInfo() {
-        if (currentDocument == null || selectionModel.getSelectedByteOffset() < 0) {
+        if (editorState.getCurrentDocument() == null || editorState.getSelectionModel().getSelectedByteOffset() < 0) {
             byteInfoPanel.clearInt16Info();
             byteInfoPanel.clearInt32Info();
             byteInfoPanel.clearInt64Info();
@@ -593,7 +546,7 @@ public class MainFrame extends JFrame {
         }
 
         try {
-            byte[] block2 = readByteBlock(selectionModel.getSelectedByteOffset(), 2);
+            byte[] block2 = readByteBlock(editorState.getSelectionModel().getSelectedByteOffset(), 2);
             if (block2 != null) {
                 java.nio.ByteBuffer bb2 = java.nio.ByteBuffer.wrap(block2)
                         .order(java.nio.ByteOrder.LITTLE_ENDIAN);
@@ -606,7 +559,7 @@ public class MainFrame extends JFrame {
                 byteInfoPanel.clearInt16Info();
             }
 
-            byte[] block4 = readByteBlock(selectionModel.getSelectedByteOffset(), 4);
+            byte[] block4 = readByteBlock(editorState.getSelectionModel().getSelectedByteOffset(), 4);
             if (block4 != null) {
                 java.nio.ByteBuffer bb4 = java.nio.ByteBuffer.wrap(block4)
                         .order(java.nio.ByteOrder.LITTLE_ENDIAN);
@@ -620,7 +573,7 @@ public class MainFrame extends JFrame {
                 byteInfoPanel.clearInt32Info();
             }
 
-            byte[] block8 = readByteBlock(selectionModel.getSelectedByteOffset(), 8);
+            byte[] block8 = readByteBlock(editorState.getSelectionModel().getSelectedByteOffset(), 8);
             if (block8 != null) {
                 java.nio.ByteBuffer bb8 = java.nio.ByteBuffer.wrap(block8)
                         .order(java.nio.ByteOrder.LITTLE_ENDIAN);
@@ -643,7 +596,7 @@ public class MainFrame extends JFrame {
     }
 
     private void navigateToFoundOffset(long foundOffset) {
-        long rowStartOffset = hexViewport.alignOffsetToRowStart(foundOffset);
+        long rowStartOffset = editorState.getHexViewport().alignOffsetToRowStart(foundOffset);
         setViewportOffsetClamped(rowStartOffset);
 
         if (isOffsetInsideFile(foundOffset)) {
@@ -654,7 +607,7 @@ public class MainFrame extends JFrame {
     }
 
     private void updateModifiedStatus() {
-        if (currentDocument != null && currentDocument.isModified()) {
+        if (editorState.getCurrentDocument() != null && editorState.getCurrentDocument().isModified()) {
             saveStatus.setText("Есть несохраненные изменения");
         } else {
             saveStatus.setText("Сохранено");
@@ -688,13 +641,13 @@ public class MainFrame extends JFrame {
             return;
         }
 
-        if (currentFile == null) {
+        if (editorState.getCurrentFile() == null) {
             saveFileAs();
             return;
         }
 
         try {
-            saveDocumentToTarget(currentFile);
+            saveDocumentToTarget(editorState.getCurrentFile());
             showInfoMessage();
         } catch (IOException e) {
             showErrorMessage("Ошибка при сохранении файла: " + e.getMessage());
@@ -702,7 +655,7 @@ public class MainFrame extends JFrame {
     }
 
     private boolean confirmSaveIfNeeded() {
-        if (currentDocument == null || !currentDocument.isModified()) {
+        if (editorState.getCurrentDocument() == null || !editorState.getCurrentDocument().isModified()) {
             return false;
         }
 
@@ -719,7 +672,7 @@ public class MainFrame extends JFrame {
         }
 
         if (choice == JOptionPane.YES_OPTION) {
-            if (currentFile == null) {
+            if (editorState.getCurrentFile() == null) {
                 JFileChooser chooser = new JFileChooser();
                 int result = chooser.showSaveDialog(this);
 
@@ -738,7 +691,7 @@ public class MainFrame extends JFrame {
                 }
             } else {
                 try {
-                    saveDocumentToTarget(currentFile);
+                    saveDocumentToTarget(editorState.getCurrentFile());
                     return false;
                 } catch (IOException e) {
                     showErrorMessage("Ошибка при сохранении файла: " + e.getMessage());
@@ -768,15 +721,15 @@ public class MainFrame extends JFrame {
     }
 
     private void saveDocumentToTarget(File targetFile) throws IOException {
-        if (currentDocument == null) {
+        if (editorState.getCurrentDocument() == null) {
             throw new IOException("Документ не открыт.");
         }
 
         boolean overwriteCurrent =
-                currentFile != null && isSameFile(currentFile, targetFile);
+                editorState.getCurrentFile() != null && isSameFile(editorState.getCurrentFile(), targetFile);
 
         if (!overwriteCurrent) {
-            currentDocument.saveTo(targetFile);
+            editorState.getCurrentDocument().saveTo(targetFile);
             loadFile(targetFile);
             return;
         }
@@ -788,7 +741,7 @@ public class MainFrame extends JFrame {
 
         File tempFile = File.createTempFile("hexedit_", ".tmp", parentDir);
 
-        currentDocument.saveTo(tempFile);
+        editorState.getCurrentDocument().saveTo(tempFile);
 
         closeCurrentDocument();
 
@@ -835,7 +788,7 @@ public class MainFrame extends JFrame {
 
         try {
             MaskPattern maskPattern = searchService.parseMaskPattern(input);
-            long foundOffset = searchService.findMaskedPattern(currentDocument, maskPattern);
+            long foundOffset = searchService.findMaskedPattern(editorState.getCurrentDocument(), maskPattern);
 
             if (foundOffset < 0) {
                 showWarningMessage("Совпадение не найдено.");
@@ -852,22 +805,16 @@ public class MainFrame extends JFrame {
     }
 
     private void selectSingleByte(long offset) {
-        selectionModel.selectSingleByte(offset);
-        applyRangeSelectionToTable();
-        updateSelectedByteInfo();
-    }
-
-    private void extendSelectionTo(long offset) {
-        selectionModel.extendSelectionTo(offset);
+        editorState.getSelectionModel().selectSingleByte(offset);
         applyRangeSelectionToTable();
         updateSelectedByteInfo();
     }
 
     private void applyRangeSelectionToTable() {
-        long min = selectionModel.getRangeMinOffset();
-        long max = selectionModel.getRangeMaxOffset();
+        long min = editorState.getSelectionModel().getRangeMinOffset();
+        long max = editorState.getSelectionModel().getRangeMaxOffset();
 
-        selectionUpdating = true;
+        editorState.setSelectionUpdating(true);
         try {
             table.clearSelection();
 
@@ -875,8 +822,8 @@ public class MainFrame extends JFrame {
                 return;
             }
 
-            long pageStart = hexViewport.getTableOffset();
-            long pageEnd = pageStart + hexViewport.getPageBytesSize() - 1;
+            long pageStart = editorState.getHexViewport().getTableOffset();
+            long pageEnd = pageStart + editorState.getHexViewport().getPageBytesSize() - 1;
 
             long visibleStart = Math.max(min, pageStart);
             long visibleEnd = Math.min(max, pageEnd);
@@ -887,15 +834,15 @@ public class MainFrame extends JFrame {
 
             for (long offset = visibleStart; offset <= visibleEnd; offset++) {
                 long relativeOffset = offset - pageStart;
-                int row = (int) (relativeOffset / hexViewport.getBytesPerRow());
-                int column = (int) (relativeOffset % hexViewport.getBytesPerRow());
+                int row = (int) (relativeOffset /editorState.getHexViewport().getBytesPerRow());
+                int column = (int) (relativeOffset % editorState.getHexViewport().getBytesPerRow());
 
                 table.addRowSelectionInterval(row, row);
                 table.addColumnSelectionInterval(column, column);
             }
 
         } finally {
-            selectionUpdating = false;
+            editorState.setSelectionUpdating(false);
         }
     }
     private void deleteSelectedRange(DeleteOption option) {
@@ -903,8 +850,8 @@ public class MainFrame extends JFrame {
             return;
         }
 
-        long start = selectionModel.getRangeMinOffset();
-        long length = selectionModel.getSelectedRangeLength();
+        long start = editorState.getSelectionModel().getRangeMinOffset();
+        long length = editorState.getSelectionModel().getSelectedRangeLength();
 
         if (start < 0 || length <= 0) {
             showWarningMessage("Сначала выделите байт или диапазон.");
@@ -920,19 +867,9 @@ public class MainFrame extends JFrame {
         }
     }
 
-    private void updateSelectionAfterDelete(long start, long deletedLength, DeleteOption option) throws IOException {
-        long docLength = currentDocument.length();
-
-        if (option == DeleteOption.ZERO_FILL) {
-            selectionModel.updateAfterZeroFill(start, deletedLength, docLength);
-        } else {
-            selectionModel.updateAfterShiftDelete(start, docLength);
-        }
-    }
-
     private byte[] readSelectedRangeBytes() throws IOException {
-        long start = selectionModel.getRangeMinOffset();
-        long length = selectionModel.getSelectedRangeLength();
+        long start = editorState.getSelectionModel().getRangeMinOffset();
+        long length = editorState.getSelectionModel().getSelectedRangeLength();
 
         if (start < 0 || length <= 0) {
             throw new IllegalArgumentException("Нет выделенного диапазона.");
@@ -945,7 +882,7 @@ public class MainFrame extends JFrame {
         byte[] data = new byte[(int) length];
 
         for (int i = 0; i < data.length; i++) {
-            data[i] = currentDocument.readByte(start + i);
+            data[i] = editorState.getCurrentDocument().readByte(start + i);
         }
 
         return data;
@@ -967,9 +904,14 @@ public class MainFrame extends JFrame {
     }
 
     private void deleteRangeFromDocument(long start, long length, DeleteOption option) throws IOException {
-        currentDocument.delete(start, length, option);
-        updateSelectionAfterDelete(start, length, option);
-        setViewportOffsetClamped(hexViewport.getTableOffset());
+        editorState.getCurrentDocument().delete(start, length, option);
+
+        if(option == DeleteOption.ZERO_FILL){
+            editorState.getSelectionModel().updateAfterZeroFill(start,length, editorState.getCurrentDocument().length());
+        } else {
+            editorState.getSelectionModel().updateAfterShiftDelete(start, editorState.getCurrentDocument().length());
+        }
+        setViewportOffsetClamped(editorState.getHexViewport().getTableOffset());
         updateModifiedStatus();
     }
 
@@ -977,8 +919,8 @@ public class MainFrame extends JFrame {
         if (ensureDocumentOpened()) {
             return;
         }
-        long start = selectionModel.getRangeMinOffset();
-        long length = selectionModel.getSelectedRangeLength();
+        long start = editorState.getSelectionModel().getRangeMinOffset();
+        long length = editorState.getSelectionModel().getSelectedRangeLength();
 
         if (start < 0 || length <= 0) {
             showWarningMessage("Сначала выделите байт или диапазон.");
@@ -1017,15 +959,6 @@ public class MainFrame extends JFrame {
         } catch (IllegalArgumentException e) {
             showWarningMessage(e.getMessage());
         }
-    }
-
-    private void updateSelectionAfterPaste(long startOffset, long insertedLength) throws IOException {
-        long docLength = currentDocument.length();
-
-        selectionModel.updateAfterPaste(startOffset, insertedLength, docLength);
-
-        applyRangeSelectionToTable();
-        updateSelectedByteInfo();
     }
 
     private void showInsertHexDialog() {
@@ -1086,19 +1019,49 @@ public class MainFrame extends JFrame {
     }
 
     private void insertBytesAtSelection(byte[] data, InsertOption option) throws IOException {
-        long offset = selectionModel.getSelectedByteOffset() >= 0 ? selectionModel.getSelectedByteOffset() : 0;
+        long offset = editorState.getSelectionModel().getSelectedByteOffset() >= 0 ? editorState.getSelectionModel().getSelectedByteOffset() : 0;
 
-        currentDocument.insert(offset, data, option);
-        updateSelectionAfterPaste(offset, data.length);
-        setViewportOffsetClamped(hexViewport.getTableOffset());
+        editorState.getCurrentDocument().insert(offset, data, option);
+
+        editorState.getSelectionModel().updateAfterPaste(offset, data.length,  editorState.getCurrentDocument().length());
+        applyRangeSelectionToTable();
+        updateSelectedByteInfo();
+        setViewportOffsetClamped(editorState.getHexViewport().getTableOffset());
         updateModifiedStatus();
     }
 
     private boolean ensureDocumentOpened() {
-        if (currentDocument != null) {
+        if ( editorState.getCurrentDocument() != null) {
             return false;
         }
         showWarningMessage("Сначала откройте файл.");
         return true;
+    }
+
+    private void showErrorMessage(String message){
+        JOptionPane.showMessageDialog(
+                this,
+                message,
+                "Ошибка",
+                JOptionPane.ERROR_MESSAGE
+        );
+    }
+
+    private void showWarningMessage(String  message){
+        JOptionPane.showMessageDialog(
+                this,
+                message,
+                "Предупреждение",
+                JOptionPane.WARNING_MESSAGE
+        );
+    }
+
+    private void showInfoMessage() {
+        JOptionPane.showMessageDialog(
+                this,
+                "Файл успешно сохранен.",
+                "Информация",
+                JOptionPane.INFORMATION_MESSAGE
+        );
     }
 }

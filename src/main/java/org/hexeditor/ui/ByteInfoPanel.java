@@ -3,6 +3,11 @@ package org.hexeditor.ui;
 import javax.swing.*;
 import java.awt.*;
 
+/*
+    Нижняя информационная панель, показывает информацию о выделенном байте(блоке)
+    Показывает смещение, hex-значение, знаковое и беззнаковое представление.
+    Показывает 2, 4, 8, блоки байтов от текущего выбранного байта.(little-endian)
+ */
 public class ByteInfoPanel extends JPanel {
     private final JLabel viewOffsetLabel = new JLabel("offset: 00000000");
     private final JLabel selectedOffsetLabel = new JLabel("Selected: --");
@@ -75,7 +80,8 @@ public class ByteInfoPanel extends JPanel {
         clearInt16Info();
         clearInt32Info();
         clearInt64Info();
-        clearBlockLength();
+
+        blockLengthLabel.setText("Block: --");
     }
 
     public void showSingleByte(long offset, int unsignedValue, int signedValue) {
@@ -125,9 +131,5 @@ public class ByteInfoPanel extends JPanel {
         } else {
             blockLengthLabel.setText("Block: " + length + " bytes");
         }
-    }
-
-    public void clearBlockLength() {
-        blockLengthLabel.setText("Block: --");
     }
 }

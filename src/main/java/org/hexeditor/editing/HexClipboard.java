@@ -1,6 +1,9 @@
 package org.hexeditor.editing;
 
 import java.util.Arrays;
+/*
+    Класс - буфер обмена
+ */
 
 public class HexClipboard {
     private byte[] data = new byte[0];
@@ -19,13 +22,5 @@ public class HexClipboard {
 
     public boolean hasData() {
         return data.length > 0;
-    }
-
-    public int size() {
-        return data.length;
-    }
-
-    public void clear() {
-        data = new byte[0];
     }
 }

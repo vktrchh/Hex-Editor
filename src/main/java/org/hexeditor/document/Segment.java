@@ -1,8 +1,12 @@
 package org.hexeditor.document;
 
+/*
+    Класс описание сегмента документа
+    Хранит источник, длину и начальное смещение.
+ */
 public class Segment {
-    private SegmentType type;
-    private long start;
+    private final SegmentType type;
+    private final long start;
     private long length;
 
     public Segment(SegmentType type, long start, long length) {
@@ -15,16 +19,8 @@ public class Segment {
         return type;
     }
 
-    public void setType(SegmentType type) {
-        this.type = type;
-    }
-
     public long getStart() {
         return start;
-    }
-
-    public void setStart(long start) {
-        this.start = start;
     }
 
     public long getLength() {

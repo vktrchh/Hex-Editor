@@ -1,6 +1,5 @@
 package org.hexeditor.document;
 
-import org.hexeditor.io.ByteSource;
 import org.hexeditor.io.FileByteSource;
 
 import java.io.File;
@@ -8,11 +7,15 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.*;
 
+/*
+    Класс хранит текущее состояние редактируемого документа.
+    Данные хранятся как набор сегментов из исходного файла и байтов добавленных при редактировании.
+ */
+
 public class FileHexDocument implements HexDocument {
-    private final ByteSource byteSource;
+    private final FileByteSource byteSource;
     private final AddBuffer addBuffer = new AddBuffer();
     private final List<Segment> segments = new ArrayList<>();
-    //private final Map<Long, Byte> modifiedBytes = new HashMap<>();
 
     private long logicalLength;
     private boolean modified;
@@ -20,7 +23,6 @@ public class FileHexDocument implements HexDocument {
 
     public FileHexDocument(File file) throws IOException {
         this.byteSource = new FileByteSource(file);
-
         this.segments.add(new Segment(SegmentType.SOURCE, 0, byteSource.length()));
         this.logicalLength = byteSource.length();
         this.modified = false;
@@ -155,12 +157,11 @@ public class FileHexDocument implements HexDocument {
 
     private static class SegmentLocation {
         private final int segmentIndex;
-        private final long segmentLogicalStart;
         private final long offsetInsideSegment;
 
-        private SegmentLocation(int segmentIndex, long segmentLogicalStart, long offsetInsideSegment) {
+        private SegmentLocation(int segmentIndex, long offsetInsideSegment) {
             this.segmentIndex = segmentIndex;
-            this.segmentLogicalStart = segmentLogicalStart;
+            //this.segmentLogicalStart = segmentLogicalStart;
             this.offsetInsideSegment = offsetInsideSegment;
         }
     }
@@ -173,7 +174,7 @@ public class FileHexDocument implements HexDocument {
             long nextCursor = cursor + segment.getLength();
 
             if (logicalOffset < nextCursor) {
-                return new SegmentLocation(i, cursor, logicalOffset - cursor);
+                return new SegmentLocation(i, logicalOffset - cursor);
             }
 
             cursor = nextCursor;

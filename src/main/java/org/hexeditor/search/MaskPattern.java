@@ -1,5 +1,9 @@
 package org.hexeditor.search;
 
+/*
+    Класс для хранения маски;
+ */
+
 public class MaskPattern {
     private final byte[] values;
     private final boolean[] wildcard;

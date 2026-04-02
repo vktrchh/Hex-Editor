@@ -3,6 +3,9 @@ package org.hexeditor.search;
 import org.hexeditor.document.HexDocument;
 
 import java.io.IOException;
+/*
+    Класс для поиска байтов в документе.
+ */
 
 public class HexSearchService {
 
@@ -36,37 +39,6 @@ public class HexSearchService {
         }
 
         return result;
-    }
-
-    public long findExactPattern(HexDocument document, byte[] pattern) throws IOException {
-        if (document == null) {
-            throw new IllegalStateException("Файл не открыт.");
-        }
-
-        if (pattern == null || pattern.length == 0) {
-            return -1;
-        }
-
-        long fileLength = document.length();
-        long maxStart = fileLength - pattern.length;
-
-        for (long start = 0; start <= maxStart; start++) {
-            boolean match = true;
-
-            for (int i = 0; i < pattern.length; i++) {
-                byte fileByte = document.readByte(start + i);
-                if (fileByte != pattern[i]) {
-                    match = false;
-                    break;
-                }
-            }
-
-            if (match) {
-                return start;
-            }
-        }
-
-        return -1;
     }
 
     public MaskPattern parseMaskPattern(String input) {

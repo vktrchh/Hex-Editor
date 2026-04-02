@@ -4,6 +4,7 @@ import javax.swing.*;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 
+
 public class MainMenuBar extends JMenuBar {
     private final JMenuItem openItem = new JMenuItem("Открыть");
     private final JMenuItem saveItem = new JMenuItem("Сохранить");

@@ -1,11 +1,13 @@
 package org.hexeditor.model;
 
+/*
+    Класс для хранения отображаемой области в hex таблице,
+    хранит сколько байт должно отображаться в строке и сколько отображается строк.
+ */
 public class HexViewport {
     private long tableOffset = 0;
     private int bytesPerRow = 16;
     private int visibleRows = 16;
-
-
 
     public long getTableOffset() {
         return tableOffset;
@@ -51,6 +53,7 @@ public class HexViewport {
         return visibleRows * bytesPerRow;
     }
 
+    //выравнивание смещения на начало строки
     public long alignOffsetToRowStart(long offset) {
         if (offset <= 0) {
             return 0;

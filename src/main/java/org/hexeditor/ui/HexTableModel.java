@@ -6,6 +6,12 @@ import org.hexeditor.model.HexViewport;
 import javax.swing.table.AbstractTableModel;
 import java.io.IOException;
 
+
+/*
+    Модель главной таблицы.
+    Отображает байты документа в 16-ных значениях
+    поддерживает редактирование байтов через ячейки таблицы.
+ */
 public class HexTableModel extends AbstractTableModel {
     private final HexDocument document;
     private final HexViewport viewport;
@@ -14,7 +20,6 @@ public class HexTableModel extends AbstractTableModel {
         this.document = document;
         this.viewport = viewport;
     }
-
 
     @Override
     public String getColumnName(int column){
@@ -71,8 +76,6 @@ public class HexTableModel extends AbstractTableModel {
             document.writeByte(offset, newValue);
             fireTableCellUpdated(rowIndex, columnIndex);
 
-        } catch (IllegalArgumentException e) {
-            throw e;
         } catch (IOException e) {
             throw new RuntimeException("Ошибка при записи байта: " + e.getMessage(), e);
         }

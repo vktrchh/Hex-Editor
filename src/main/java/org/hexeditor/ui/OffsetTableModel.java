@@ -2,8 +2,11 @@ package org.hexeditor.ui;
 
 import org.hexeditor.model.HexViewport;
 
-
 import javax.swing.table.AbstractTableModel;
+
+/*
+    Модель таблицы смещений, отображает начальное смещение каждой строки hex-таблицы.
+ */
 
 public class OffsetTableModel extends AbstractTableModel {
     private final HexViewport viewport;
